@@ -1957,10 +1957,15 @@ _PROMPT_SUBJECTS: dict[str, str] = {
        - Distanța minimă între trasee (clearance): depinde de tensiunea de lucru — la
          tensiuni joase (<50V) o distanță de 0.3-0.5mm e uzuală; la tensiuni mai mari, distanța
          crește substanțial (izolație în aer/PCB).
-       - Minimizarea încrucișărilor pe cablaj monostrat (single-layer): fără al doilea strat
-         sau via-uri, orice traversare de trasee era o PROBLEMĂ DE GEOMETRIE reală, rezolvată
-         prin rearanjarea componentelor sau printr-un "jumper" (fir de punte) — tehnică ce
-         merită explicată explicit elevului ca exercițiu de gândire spațială.
+       - Minimizarea încrucișărilor pe cablaj monostrat (single-layer) — ACEASTA ERA "ARTA"
+         proiectării manuale: fără al doilea strat sau via-uri, orice traversare de trasee era
+         o PROBLEMĂ DE GEOMETRIE de rezolvat prin GÂNDIRE, nu prin scurtătură. Jumperul (fir de
+         punte) e o soluție de ULTIMĂ INSTANȚĂ, folosită doar când toate opțiunile de rearanjare
+         au fost epuizate — nu prima soluție la care sari atunci când apare o încrucișare. Un
+         proiectant priceput își petrecea timp real încercând variante de plasare/rotire ÎNAINTE
+         de a admite că are nevoie de un jumper, exact pentru că fiecare jumper înseamnă un fir
+         suplimentar de lipit manual, un punct în plus de defecțiune posibilă și o placă mai
+         puțin "curată".
        - Desenarea traseelor cu unghiuri de 45° (nu 90°) — reduce efectul de antenă parazită
          și, istoric, era mai ușor de realizat cu instrumentele de desen manual.
 
@@ -2050,6 +2055,27 @@ _PROMPT_SUBJECTS: dict[str, str] = {
          1) identifică nodurile → 2) plasează componentele mari → 3) rutează alimentarea/masa
          → 4) rutează semnalele → 5) verifică regulile de lățime/clearance.
 
+       ⚠️ REGULĂ OBLIGATORIE — MINIMIZAREA JUMPERILOR (ACEASTA E "ARTA" REALĂ, CRITIC):
+       Un jumper NU e o soluție acceptabilă din prima încercare — e o CEDARE, admisă doar după ce
+       ai epuizat alternativele. Înainte de a propune un jumper pentru orice încrucișare, treci
+       OBLIGATORIU prin acest proces (arată-l elevului explicit, nu doar rezultatul final):
+       1. Încearcă să ROTEȘTI sau OGLINDEȘTI componenta implicată (mulți pini pot fi rearanjați
+          geometric fără să schimbe funcționarea circuitului — un tranzistor sau un IC poate fi
+          orientat altfel, un rezistor poate fi montat vertical în loc de orizontal).
+       2. Încearcă să MUȚI o componentă vecină pentru a elibera un culoar de trecere pentru
+          traseul blocat, chiar dacă asta strică simetria inițială a aranjamentului.
+       3. Încearcă să RESECVENȚIEZI ordinea de rutare — uneori rutarea traseelor într-o altă
+          ordine (semnalele critice primele, apoi alimentarea) deschide un traseu care înainte
+          părea blocat.
+       4. Încearcă să folosești un traseu care ocolește pe sub/pe lângă alte componente (nu în
+          linie dreaptă) — un traseu în unghi sau curbat evită adesea o încrucișare pe care un
+          traseu drept n-ar evita-o.
+       Doar dacă TOATE aceste variante eșuează, propune un jumper — și spune explicit elevului
+       DE CE (ce ai încercat și de ce n-a mers), ca să înțeleagă că jumperul e o decizie
+       argumentată, nu un reflex. Pentru un circuit simplu și simetric (ex. un multivibrator
+       astabil cu 2 tranzistoare), un proiectant priceput ajunge frecvent la 0-1 jumperi, nu la
+       2+, tocmai prin efortul de gândire de mai sus — tratează asta ca țintă, nu ca excepție.
+
        ⚠️ REGULĂ OBLIGATORIE — DESEN SVG PENTRU ORICE LAYOUT DE CABLAJ (CRITIC):
        Un layout de cablaj FĂRĂ desen vizual e aproape inutil — elevul nu poate urmări o
        "schiță" descrisă doar în cuvinte (ex. o listă de tipul "T1 / E B C / R1 / LED1" NU e un
@@ -2064,8 +2090,9 @@ _PROMPT_SUBJECTS: dict[str, str] = {
             (dreptunghi pentru rezistor, cerc pentru LED, etc.) cu eticheta ei (R1, T1, C1...) și
             pinii marcați ca puncte mici.
          2. VEDEREA TRASEELOR DE CUPRU (din partea de jos, în oglindă față de prima): liniile de
-            traseu conectând găurile corespunzătoare, cu jumperii marcați vizibil (altă culoare)
-            dacă există încrucișări pe cablaj monostrat.
+            traseu conectând găurile corespunzătoare. Marchează un jumper (altă culoare) DOAR
+            dacă rearanjarea/rotirea componentelor nu a putut evita încrucișarea — numărul de
+            jumperi din desen trebuie să reflecte efortul real de minimizare, nu prima soluție.
        Etichetează clar în SVG: numele fiecărei componente, polaritatea la condensatori electrolitici
        și diode/LED-uri, și "+9V"/"GND" pe traseele de alimentare. Nu te limita la text descriptiv
        când poți desena — un layout descris DOAR în cuvinte, fără SVG, e considerat un răspuns
