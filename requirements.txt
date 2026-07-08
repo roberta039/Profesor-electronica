@@ -1,0 +1,5 @@
+streamlit
+google-genai
+supabase
+python-docx
+dbfread
