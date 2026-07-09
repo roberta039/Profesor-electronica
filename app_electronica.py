@@ -1542,6 +1542,88 @@ def render_message_with_svg(content: str):
     st.markdown(clean_content)
 
 
+def render_message_with_excalidraw(content: str):
+    """Randează mesajul cu suport pentru scene Excalidraw (mod DEBUG experimental).
+
+    Încarcă React + Excalidraw direct din CDN (esm.sh) în browser-ul utilizatorului —
+    NU necesită nimic instalat pe server. Randarea depinde de accesul browser-ului la
+    CDN extern; dacă CDN-ul nu se încarcă (rețea restrictivă, ad-blocker agresiv etc.),
+    zona va rămâne goală — verifică Consolă (F12) în acel caz.
+    """
+    has_marker = '[[DESEN_EXCALIDRAW]]' in content
+    if not has_marker:
+        render_message_with_svg(content)
+        return
+
+    parts = content.split('[[DESEN_EXCALIDRAW]]')
+    before_text = parts[0]
+    json_code = ""
+    after_text = ""
+    if len(parts) > 1 and '[[/DESEN_EXCALIDRAW]]' in parts[1]:
+        inner_parts = parts[1].split('[[/DESEN_EXCALIDRAW]]')
+        json_code = inner_parts[0].strip()
+        after_text = inner_parts[1] if len(inner_parts) > 1 else ""
+    elif len(parts) > 1:
+        json_code = parts[1].strip()
+
+    if before_text.strip():
+        st.markdown(before_text.strip())
+
+    try:
+        scene_data = json.loads(json_code)
+        elements = scene_data.get("elements", [])
+    except Exception as e:
+        st.warning(f"⚠️ Scena Excalidraw nu a putut fi parsată ca JSON valid: {e}")
+        st.code(json_code[:2000], language="json")
+        if after_text.strip():
+            st.markdown(after_text.strip())
+        return
+
+    _is_dark = st.session_state.get("dark_mode", False)
+    _bg = "#0e1117" if _is_dark else "#ffffff"
+    elements_json = json.dumps(elements)
+
+    _html = f'''<div id="excalidraw-root" style="height:600px;background:{_bg};border-radius:8px;overflow:hidden;"></div>
+    <script type="module">
+      import React from "https://esm.sh/react@18";
+      import {{ createRoot }} from "https://esm.sh/react-dom@18/client";
+      import {{ Excalidraw, restoreElements }} from "https://esm.sh/@excalidraw/excalidraw@0.17.6?deps=react@18,react-dom@18,react-dom@18/client";
+
+      const rawElements = {elements_json};
+
+      try {{
+        const restored = restoreElements(rawElements, null);
+        const root = createRoot(document.getElementById("excalidraw-root"));
+        root.render(
+          React.createElement(Excalidraw, {{
+            initialData: {{ elements: restored, appState: {{ viewBackgroundColor: "{_bg}" }} }},
+            viewModeEnabled: true,
+            theme: "{'dark' if _is_dark else 'light'}",
+          }})
+        );
+      }} catch (err) {{
+        document.getElementById("excalidraw-root").innerHTML =
+          "<div style='padding:20px;color:#888;font-family:sans-serif;'>⚠️ Eroare la randarea Excalidraw: " + err.message + "</div>";
+        console.error(err);
+      }}
+    </script>'''
+
+    components.html(_html, height=620, scrolling=False)
+
+    if after_text.strip():
+        st.markdown(after_text.strip())
+
+
+def render_message(content: str):
+    """Dispatcher: alege motorul de desenare corect pe baza marcajelor prezente în mesaj.
+
+    Robust la schimbarea motorului mid-conversație — verifică marcajul din conținut,
+    nu setarea curentă din session_state, ca mesajele vechi să rămână randate corect.
+    """
+    if '[[DESEN_EXCALIDRAW]]' in content:
+        render_message_with_excalidraw(content)
+    else:
+        render_message_with_svg(content)
 # === INIȚIALIZARE ===
 init_db()
 cleanup_old_sessions(CLEANUP_DAYS_OLD)
@@ -2098,6 +2180,31 @@ _PROMPT_SUBJECTS: dict[str, str] = {
        când poți desena — un layout descris DOAR în cuvinte, fără SVG, e considerat un răspuns
        incomplet la o cerere de proiectare cablaj.
 
+       CALITATEA DESENĂRII TRASEELOR (obligatoriu, nu opțional — un cablaj desenat neîngrijit e
+       la fel de inutil ca unul nedesenat):
+       - Poziționează TOATE componentele și punctele de conectare pe un GRID regulat (ex. multipli
+         de 20 unități SVG) — la fel cum hârtia de matematică oferă un grid fizic. Coordonate
+         "libere"/aproximative produc trasee strâmbe și neprofesionale.
+       - Traseele se desenează ca segmente de linie DREAPTĂ (folosind <line> sau <polyline>),
+         NICIODATĂ curbe libere (<path> cu curbe Bézier) — un cablaj real nu are trasee curbate
+         liber, are segmente drepte cu coturi la 45° sau 90°, exact ca în desenul manual cu
+         tragătorul descris în ETAPA 2/3.
+       - Rutare stil Manhattan/45°: fiecare traseu e o succesiune de segmente orizontale, verticale
+         sau la 45° — niciodată linii diagonale arbitrare care taie prin mijlocul altor componente.
+       - Un traseu NU trebuie să treacă vizual prin pinul sau corpul altei componente decât dacă
+         intenționat traversează pe acolo (și atunci trebuie clar că e un traseu, nu o coincidență
+         vizuală) — verifică geometric înainte de a desena.
+       - Dacă două trasee ar trebui să se intersecteze pe același desen (același "strat" vizual)
+         fără jumper și fără intenție explicită, ASTA E O EROARE DE LAYOUT — fie rearanjează
+         geometria, fie adaugă jumperul care lipsește. Un desen cu linii care se încrucișează
+         "din greșeală" e mai rău decât unul cu un jumper asumat.
+       - Păstrează o distanță vizuală clară și consistentă între trasee paralele (nu le desena
+         lipite unele de altele) — spațierea vizuală trebuie să reflecte clearance-ul real descris
+         în text.
+       - Folosește culori distincte și consistente pe tip de rol: ex. roșu pentru +9V, negru/gri
+         pentru GND, o culoare pentru semnal — și păstrează ACELEAȘI culori în ambele vederi
+         (componente și cupru), ca elevul să poată urmări vizual corespondența.
+
        - Dacă elevul menționează „cum se făcea pe vremuri” sau întreabă despre metoda manuală,
          tratează asta cu respect — e o competență tehnică reală, nu doar nostalgie.
 """,
@@ -2388,13 +2495,22 @@ _PROMPT_ALL_SUBJECTS = "\n    GHID DE COMPORTAMENT:\n" + "".join(_PROMPT_SUBJECT
 
 
 def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
-                      mod_strategie: bool = False, mod_bac_intensiv: bool = False, mod_avansat: bool = False) -> str:
+                      mod_strategie: bool = False, mod_bac_intensiv: bool = False, mod_avansat: bool = False,
+                      diagram_engine: str | None = None) -> str:
     """Returnează System Prompt adaptat materiei selectate și modurilor active.
-    
+
+    diagram_engine: "svg" (implicit, regula de desenare din _PROMPT_COMUN) sau
+    "excalidraw" (experimental — suprascrie regula SVG cu una care cere JSON Excalidraw,
+    pentru comparație vizuală în modul Debug). Dacă nu e specificat explicit (None),
+    se preia automat din st.session_state["diagram_engine"] (implicit "svg") — astfel
+    apelurile existente ale funcției nu trebuie modificate ca să respecte alegerea din Debug.
+
     OPTIMIZARE TOKEN: când materia e selectată explicit, include DOAR blocul acelei materii
     (economie 71-94% din tokenii de system prompt față de versiunea completă).
     Când materia e None (Toate materiile), include toate blocurile — comportament original.
     """
+    if diagram_engine is None:
+        diagram_engine = st.session_state.get("diagram_engine", "svg")
 
     if materie == "pedagogie":
         # Mod pedagogie: trimitem doar _PROMPT_COMUN + _PROMPT_FINAL (fără bloc categorie)
@@ -2540,6 +2656,41 @@ def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
         # Toate materiile (sau materie necunoscută) — comportament original
         ghid_materie = _PROMPT_ALL_SUBJECTS
 
+    # ── Motor de desenare (Debug: SVG normal vs Excalidraw experimental) ──
+    diagram_engine_bloc = ""
+    if diagram_engine == "excalidraw":
+        diagram_engine_bloc = r"""
+
+    ⚠️ SUPRASCRIERE MOD DESENARE (DEBUG — EXCALIDRAW ACTIV):
+    IGNORĂ regula de desenare SVG de mai sus ([[DESEN_SVG]]). În schimb, pentru ORICE desen/
+    diagramă/layout de cablaj, generează o scenă Excalidraw în format JSON, în interiorul
+    marcajelor [[DESEN_EXCALIDRAW]]...[[/DESEN_EXCALIDRAW]].
+
+    Format JSON așteptat — un obiect cu o listă "elements", fiecare element cu cel puțin:
+    {
+      "type": "rectangle" | "ellipse" | "line" | "text" | "diamond",
+      "x": <număr>, "y": <număr>,
+      "width": <număr>, "height": <număr>,          // pentru rectangle/ellipse/diamond
+      "points": [[x1,y1],[x2,y2],...],               // pentru "line" (coordonate relative la x,y)
+      "text": "<text afișat>",                        // doar pentru type="text"
+      "fontSize": 16,                                 // doar pentru type="text"
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "transparent" | "<culoare hex>",
+      "strokeWidth": 1
+    }
+    Exemplu minim valid:
+    [[DESEN_EXCALIDRAW]]
+    {"elements": [
+      {"type": "rectangle", "x": 40, "y": 40, "width": 80, "height": 40, "strokeColor": "#1e1e1e", "backgroundColor": "transparent"},
+      {"type": "text", "x": 50, "y": 50, "text": "R1", "fontSize": 16, "strokeColor": "#1e1e1e"},
+      {"type": "line", "x": 120, "y": 60, "points": [[0,0],[60,0],[60,40]], "strokeColor": "#e03131", "strokeWidth": 2}
+    ]}
+    [[/DESEN_EXCALIDRAW]]
+    Regulile de conținut (grid, rutare Manhattan/45°, minimizare jumperi, etichetare) rămân
+    EXACT aceleași ca la regula SVG — doar formatul de output se schimbă la JSON Excalidraw.
+    NU amesteca cele două formate în același răspuns.
+"""
+
     return ("ROL: " + rol_line
             + pas_cu_pas_bloc
             + mod_strategie_bloc
@@ -2547,7 +2698,8 @@ def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
             + mod_avansat_bloc
             + _PROMPT_COMUN
             + ghid_materie
-            + _PROMPT_FINAL)
+            + _PROMPT_FINAL
+            + diagram_engine_bloc)
 
 
 
@@ -4163,6 +4315,35 @@ with st.sidebar:
         st.caption(f"📊 Mesaje în memorie: {msg_count}/{MAX_MESSAGES_IN_MEMORY}")
         st.caption(f"🔑 Cheie API activă: {st.session_state.key_index + 1}/{len(keys)}")
 
+        # ── Motor de desenare (experimental) ──
+        st.caption("🎨 Motor de desenare (experimental):")
+        _engine_val = st.session_state.get("diagram_engine", "svg")
+        _engine_options = {"svg": "SVG (actual)", "excalidraw": "Excalidraw (CDN, experimental)"}
+        _engine_choice = st.radio(
+            "Motor desen",
+            options=list(_engine_options.keys()),
+            format_func=lambda k: _engine_options[k],
+            index=list(_engine_options.keys()).index(_engine_val),
+            key="_diagram_engine_radio",
+            label_visibility="collapsed",
+            horizontal=True,
+        )
+        if _engine_choice != _engine_val:
+            st.session_state["diagram_engine"] = _engine_choice
+            st.session_state.system_prompt = get_system_prompt(
+                st.session_state.get("materie_selectata"),
+                mod_avansat=st.session_state.get("mod_avansat", False),
+                pas_cu_pas=st.session_state.get("pas_cu_pas", False),
+                mod_strategie=st.session_state.get("mod_strategie", False),
+                mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
+                diagram_engine=_engine_choice,
+            )
+            st.toast(f"🎨 Motor de desenare: {_engine_options[_engine_choice]}", icon="✅")
+            st.rerun()
+        if _engine_choice == "excalidraw":
+            st.caption("⚠️ Excalidraw se încarcă live din CDN (esm.sh) în browser-ul tău — "
+                       "poate eșua dacă rețeaua/browser-ul blochează scripturi externe.")
+
         # ── Statistici token usage per cheie (sesiunea curentă) ──
         # Notă: Gemini Free tier = 1.500 req/zi și 1.000.000 token/min per cheie.
         # Nu avem acces la quota rămasă prin API — afișăm consumul din sesiunea curentă.
@@ -4325,7 +4506,7 @@ for i, msg in enumerate(st.session_state.messages):
                 else:
                     st.caption("⚠️ Traducerea nu mai este disponibilă în această sesiune (sesiunea a fost reîncărcată). Retrimite fișierul pentru a traduce din nou.")
             else:
-                render_message_with_svg(content)
+                render_message(content)
         else:
             st.markdown(msg["content"])
 
@@ -4440,7 +4621,7 @@ if st.session_state.get("_quick_action"):
                     full_response += text_chunk
                     message_placeholder.markdown(full_response + "▌")
                 message_placeholder.empty()
-                render_message_with_svg(full_response)
+                render_message(full_response)
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 save_message_with_limits(st.session_state.session_id, "assistant", full_response)
                 st.session_state.pop("_retry_history", None)
@@ -4519,7 +4700,7 @@ if st.session_state.get("_suggested_question"):
                 full_response += text_chunk
                 message_placeholder.markdown(full_response + "▌")
             message_placeholder.empty()
-            render_message_with_svg(full_response)
+            render_message(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             save_message_with_limits(st.session_state.session_id, "assistant", full_response)
         except Exception as e:
@@ -4707,7 +4888,7 @@ if st.session_state.pop("_pending_retry", False):
                     else:
                         _rph.markdown(_rfull + "▌")
                 _rph.empty()
-                render_message_with_svg(_rfull)
+                render_message(_rfull)
                 st.session_state.messages.append({"role": "assistant", "content": _rfull})
                 save_message_with_limits(st.session_state.session_id, "assistant", _rfull)
                 st.session_state.pop("_retry_history", None)
@@ -5173,8 +5354,7 @@ if user_input := st.chat_input("Întreabă profesorul..."):
                         message_placeholder.markdown(full_response + "▌")
 
                 message_placeholder.empty()
-                render_message_with_svg(full_response)
-
+                render_message(full_response)
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 save_message_with_limits(st.session_state.session_id, "assistant", full_response)
                 # Răspuns reușit — curățăm datele de retry
