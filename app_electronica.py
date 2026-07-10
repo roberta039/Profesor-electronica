@@ -1283,173 +1283,6 @@ def save_message_with_limits(session_id: str, role: str, content: str):
 
 
 
-# === SVG FUNCTIONS ===
-
-# ÎMBUNĂTĂȚIRE 4: lxml pentru parsare și validare SVG robustă.
-# Fallback automat la regex dacă lxml nu e disponibil.
-try:
-    from lxml import etree as _lxml_etree
-    _LXML_AVAILABLE = True
-except ImportError:
-    _LXML_AVAILABLE = False
-
-
-def repair_unclosed_tags(svg_content: str) -> str:
-    """Repară tag-uri SVG comune care nu sunt închise corect."""
-    self_closing_tags = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'image', 'use']
-    
-    for tag in self_closing_tags:
-        # FIX: pattern mai robust — nu atinge tag-uri deja self-closing
-        pattern = rf'<{tag}(\s[^>]*)?>(?!</{tag}>)'
-        
-        def fix_tag(match, _tag=tag):
-            attrs = match.group(1) or ""
-            # Dacă are deja / la final, e deja corect
-            if attrs.rstrip().endswith('/'):
-                return match.group(0)
-            return f'<{_tag}{attrs}/>'
-        
-        svg_content = re.sub(pattern, fix_tag, svg_content)
-    
-    text_opens = len(re.findall(r'<text[^>]*>', svg_content))
-    text_closes = len(re.findall(r'</text>', svg_content))
-    
-    if text_opens > text_closes:
-        for _ in range(text_opens - text_closes):
-            svg_content = svg_content.replace('</svg>', '</text></svg>')
-    
-    g_opens = len(re.findall(r'<g[^>]*>', svg_content))
-    g_closes = len(re.findall(r'</g>', svg_content))
-    
-    if g_opens > g_closes:
-        for _ in range(g_opens - g_closes):
-            svg_content = svg_content.replace('</svg>', '</g></svg>')
-    
-    return svg_content
-
-
-
-def repair_svg(svg_content: str) -> str:
-    """Repară SVG incomplet sau malformat.
-
-    ÎMBUNĂTĂȚIRE 4: Încearcă mai întâi repararea cu lxml (parser XML tolerant),
-    care gestionează corect namespace-uri, encoding și structura arborescentă.
-    Fallback la regex dacă lxml eșuează sau nu e disponibil.
-    """
-    if not svg_content:
-        return None
-
-    svg_content = svg_content.strip()
-
-    # Pasul 1: asigură tag-uri <svg> deschis/închis
-    has_svg_open  = bool(re.search(r'<svg[^>]*>', svg_content, re.IGNORECASE))
-    has_svg_close = '</svg>' in svg_content.lower()
-
-    if not has_svg_open:
-        svg_content = (
-            '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" '
-            'style="max-width:100%;height:auto;">\n'
-            + svg_content + '\n</svg>'
-        )
-    elif has_svg_open and not has_svg_close:
-        svg_content += '\n</svg>'
-
-    if 'xmlns=' not in svg_content:
-        svg_content = svg_content.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"', 1)
-    if 'viewBox=' not in svg_content.lower():
-        svg_content = svg_content.replace('<svg', '<svg viewBox="0 0 800 600"', 1)
-
-    # Pasul 2: repară cu lxml dacă e disponibil
-    if _LXML_AVAILABLE:
-        try:
-            parser = _lxml_etree.XMLParser(
-                recover=True,
-                remove_comments=False,
-                resolve_entities=False,
-                ns_clean=True,
-            )
-            root = _lxml_etree.fromstring(svg_content.encode("utf-8"), parser)
-            repaired = _lxml_etree.tostring(
-                root,
-                pretty_print=True,
-                encoding="unicode",
-                xml_declaration=False
-            )
-            return repaired
-        except Exception:
-            pass  # lxml a eșuat → continuăm cu fallback
-
-    # Pasul 3: fallback regex
-    svg_content = repair_unclosed_tags(svg_content)
-    return svg_content
-
-
-def validate_svg(svg_content: str) -> tuple:
-    """Validează SVG și returnează (is_valid, error_message).
-
-    ÎMBUNĂTĂȚIRE 4: Folosește lxml pentru validare structurală când e disponibil.
-    """
-    if not svg_content:
-        return False, "SVG gol"
-
-    visual_elements = ['path', 'rect', 'circle', 'ellipse', 'line', 'text', 'polygon', 'polyline', 'image']
-
-    if _LXML_AVAILABLE:
-        try:
-            parser = _lxml_etree.XMLParser(recover=True)
-            tree = _lxml_etree.fromstring(svg_content.encode("utf-8"), parser)
-            has_content = any(f'<{el}' in svg_content.lower() for el in visual_elements)
-            if not has_content:
-                return False, "SVG fără elemente vizuale"
-            return True, "OK"
-        except Exception as xml_err:
-            # lxml a eșuat complet — încercăm fallback simplu
-            pass
-
-    # Fallback validare simplă
-    if '<svg' not in svg_content.lower():
-        return False, "Lipsește tag-ul <svg>"
-    if '</svg>' not in svg_content.lower():
-        return False, "Lipsește tag-ul </svg>"
-    has_content = any(f'<{elem}' in svg_content.lower() for elem in visual_elements)
-    if not has_content:
-        return False, "SVG fără elemente vizuale"
-    return True, "OK"
-
-
-def sanitize_svg(svg_content: str) -> str:
-    """Sanitizeaza SVG - elimina scripturi si event handlers (XSS prevention).
-    
-    Acopera: <script>, on* handlers (ghilimele/backtick), href=javascript:,
-    use href=data:, style behavior/expression, <foreignObject>.
-    """
-    if not svg_content:
-        return svg_content
-    # Elimina <script> complet
-    svg_content = re.sub(r'<script\b[^>]*>.*?</script\s*>', '', svg_content,
-                         flags=re.DOTALL | re.IGNORECASE)
-    # Elimina event handlers on* cu ghilimele duble
-    svg_content = re.sub(r'\s+on[a-zA-Z]+\s*=\s*"[^"]*"', '', svg_content)
-    # Elimina event handlers on* cu ghilimele simple
-    svg_content = re.sub(r"\s+on[a-zA-Z]+\s*=\s*'[^']*'", '', svg_content)
-    # Elimina event handlers on* cu backtick (template literals)
-    svg_content = re.sub(r'\s+on[a-zA-Z]+\s*=\s*`[^`]*`', '', svg_content)
-    # Elimina href=javascript: si xlink:href=javascript:
-    svg_content = re.sub(r'(xlink:)?href\s*=\s*["\']?\s*javascript:[^"\'>\s]*["\']?', '',
-                         svg_content, flags=re.IGNORECASE)
-    # Elimina <use href="data:..."> — poate injecta SVG/HTML extern
-    svg_content = re.sub(r'<use\b[^>]*href\s*=\s*["\']data:[^"\']*["\'][^>]*>', '',
-                         svg_content, flags=re.IGNORECASE)
-    # Elimina style cu behavior: sau expression( (vector de atac IE/vechi)
-    svg_content = re.sub(r'style\s*=\s*["\'][^"\']*(?:behavior|expression)\s*:[^"\']*["\']', '',
-                         svg_content, flags=re.IGNORECASE)
-    # Elimina <foreignObject> — permite injectare HTML arbitrar in SVG
-    svg_content = re.sub(r'<foreignObject\b.*?</foreignObject\s*>', '', svg_content,
-                         flags=re.DOTALL | re.IGNORECASE)
-    return svg_content
-
-
-
 def _is_gfile_active(gfile) -> bool:
     """Verifică dacă un fișier Google este activ — helper consistent folosit peste tot."""
     state_str = str(gfile.state)
@@ -1457,173 +1290,16 @@ def _is_gfile_active(gfile) -> bool:
     return state_str in ("FileState.ACTIVE", "ACTIVE") or state_name == "ACTIVE"
 
 
-def render_message_with_svg(content: str):
-    """Renderează mesajul cu suport îmbunătățit pentru SVG."""
-    has_svg_markers = '[[DESEN_SVG]]' in content
-    # Regex precis: detectează doar blocuri SVG complete, nu menționări în text
-    # FIX bug 3: \b word boundary corect — previne match pe tag-uri ca <svgfoo>
-    has_svg_elements = bool(re.search(r'<svg\b[^>]*>.*?</svg\s*>', content, re.DOTALL | re.IGNORECASE))
-    has_svg_sub_elements = any(tag in content.lower() for tag in ['<path', '<rect', '<circle', '<line', '<polygon'])
-    
-    if has_svg_markers or (has_svg_elements) or (has_svg_sub_elements and 'stroke=' in content):
-        svg_code = None
-        before_text = ""
-        after_text = ""
-        
-        if '[[DESEN_SVG]]' in content:
-            parts = content.split('[[DESEN_SVG]]')
-            before_text = parts[0]
-            if len(parts) > 1 and '[[/DESEN_SVG]]' in parts[1]:
-                inner_parts = parts[1].split('[[/DESEN_SVG]]')
-                svg_code = inner_parts[0]
-                after_text = inner_parts[1] if len(inner_parts) > 1 else ""
-            elif len(parts) > 1:
-                svg_code = parts[1]
-        elif '<svg' in content.lower():
-            svg_match = re.search(r'<svg.*?</svg>', content, re.DOTALL | re.IGNORECASE)
-            if svg_match:
-                svg_code = svg_match.group(0)
-                before_text = content[:svg_match.start()]
-                after_text = content[svg_match.end():]
-            else:
-                svg_start = content.lower().find('<svg')
-                if svg_start != -1:
-                    before_text = content[:svg_start]
-                    svg_code = content[svg_start:]
-        
-        if svg_code:
-            svg_code = sanitize_svg(svg_code)
-            svg_code = repair_svg(svg_code)
-            # Injectam <style> direct in SVG dupa primul tag <svg>
-            # Aceasta suprascrie ORICE background/fill alb pus de AI, indiferent de forma
-            _dark_svg = st.session_state.get("dark_mode", False)
-            _style_inject = (
-                "<style>"
-                "svg{background:transparent!important}"
-                "rect[id='bg'],rect[id='background'],rect.bg,rect.background{display:none!important}"
-                + ("text{fill:#e0e0e0!important}" if _dark_svg else "")
-                + "</style>"
-            )
-            svg_code = re.sub(r'(<svg[^>]*>)', r'\1' + _style_inject, svg_code, count=1)
-            is_valid, error = validate_svg(svg_code)
-            
-            if is_valid:
-                if before_text.strip():
-                    st.markdown(before_text.strip())
-                
-                # components.html reda SVG exact, fara sanitizare Streamlit
-                _is_dark = st.session_state.get("dark_mode", False)
-                _bg      = "#0e1117" if _is_dark else "#ffffff"
-                _text    = "#fafafa" if _is_dark else "#1a1a1a"
-                _svg_height = 650
-                components.html(
-                    f'''<style>
-                    html,body{{margin:0;padding:0;background:{_bg};}}
-                    .svg-wrap{{background:{_bg};width:100%;padding:10px 4px;box-sizing:border-box;border-radius:8px;}}
-                    svg{{background:transparent!important;max-width:100%;height:auto;}}
-                    svg text{{fill:{_text}!important;}}
-                    svg rect[fill="white"],svg rect[fill="#fff"],svg rect[fill="#ffffff"]{{fill:{_bg}!important;}}
-                    </style>
-                    <div class="svg-wrap">{svg_code}</div>''',
-                    height=_svg_height,
-                    scrolling=False,
-                )
-                
-                if after_text.strip():
-                    st.markdown(after_text.strip())
-                return
-            else:
-                st.warning(f"⚠️ Desenul nu a putut fi afișat corect: {error}")
-    
-    clean_content = content
-    clean_content = re.sub(r'\[\[DESEN_SVG\]\]', '\n🎨 *Desen:*\n', clean_content)
-    clean_content = re.sub(r'\[\[/DESEN_SVG\]\]', '\n', clean_content)
-    
-    st.markdown(clean_content)
-
-
-def render_message_with_excalidraw(content: str):
-    """Randează mesajul cu suport pentru scene Excalidraw (mod DEBUG experimental).
-
-    Încarcă React + Excalidraw direct din CDN (esm.sh) în browser-ul utilizatorului —
-    NU necesită nimic instalat pe server. Randarea depinde de accesul browser-ului la
-    CDN extern; dacă CDN-ul nu se încarcă (rețea restrictivă, ad-blocker agresiv etc.),
-    zona va rămâne goală — verifică Consolă (F12) în acel caz.
-    """
-    has_marker = '[[DESEN_EXCALIDRAW]]' in content
-    if not has_marker:
-        render_message_with_svg(content)
-        return
-
-    parts = content.split('[[DESEN_EXCALIDRAW]]')
-    before_text = parts[0]
-    json_code = ""
-    after_text = ""
-    if len(parts) > 1 and '[[/DESEN_EXCALIDRAW]]' in parts[1]:
-        inner_parts = parts[1].split('[[/DESEN_EXCALIDRAW]]')
-        json_code = inner_parts[0].strip()
-        after_text = inner_parts[1] if len(inner_parts) > 1 else ""
-    elif len(parts) > 1:
-        json_code = parts[1].strip()
-
-    if before_text.strip():
-        st.markdown(before_text.strip())
-
-    try:
-        scene_data = json.loads(json_code)
-        elements = scene_data.get("elements", [])
-    except Exception as e:
-        st.warning(f"⚠️ Scena Excalidraw nu a putut fi parsată ca JSON valid: {e}")
-        st.code(json_code[:2000], language="json")
-        if after_text.strip():
-            st.markdown(after_text.strip())
-        return
-
-    _is_dark = st.session_state.get("dark_mode", False)
-    _bg = "#0e1117" if _is_dark else "#ffffff"
-    elements_json = json.dumps(elements)
-
-    _html = f'''<div id="excalidraw-root" style="height:600px;background:{_bg};border-radius:8px;overflow:hidden;"></div>
-    <script type="module">
-      import React from "https://esm.sh/react@18";
-      import {{ createRoot }} from "https://esm.sh/react-dom@18/client";
-      import {{ Excalidraw, restoreElements }} from "https://esm.sh/@excalidraw/excalidraw@0.17.6?deps=react@18,react-dom@18,react-dom@18/client";
-
-      const rawElements = {elements_json};
-
-      try {{
-        const restored = restoreElements(rawElements, null);
-        const root = createRoot(document.getElementById("excalidraw-root"));
-        root.render(
-          React.createElement(Excalidraw, {{
-            initialData: {{ elements: restored, appState: {{ viewBackgroundColor: "{_bg}" }} }},
-            viewModeEnabled: true,
-            theme: "{'dark' if _is_dark else 'light'}",
-          }})
-        );
-      }} catch (err) {{
-        document.getElementById("excalidraw-root").innerHTML =
-          "<div style='padding:20px;color:#888;font-family:sans-serif;'>⚠️ Eroare la randarea Excalidraw: " + err.message + "</div>";
-        console.error(err);
-      }}
-    </script>'''
-
-    components.html(_html, height=620, scrolling=False)
-
-    if after_text.strip():
-        st.markdown(after_text.strip())
-
-
 def render_message(content: str):
-    """Dispatcher: alege motorul de desenare corect pe baza marcajelor prezente în mesaj.
+    """Randează mesajul ca markdown simplu.
 
-    Robust la schimbarea motorului mid-conversație — verifică marcajul din conținut,
-    nu setarea curentă din session_state, ca mesajele vechi să rămână randate corect.
+    Motoarele de desenare automată (SVG, Excalidraw) au fost eliminate — elevii încarcă
+    poze cu lucrarea lor fizică (cablaj, lipitură etc.) prin uploaderul general din
+    sidebar ("📁 Materiale"), iar profesorul le analizează și oferă feedback în chat.
     """
-    if '[[DESEN_EXCALIDRAW]]' in content:
-        render_message_with_excalidraw(content)
-    else:
-        render_message_with_svg(content)
+    st.markdown(content)
+
+
 # === INIȚIALIZARE ===
 init_db()
 cleanup_old_sessions(CLEANUP_DAYS_OLD)
@@ -1927,20 +1603,19 @@ _PROMPT_FINAL = r"""
            - La poze cu probleme scrise de mână: transcrie problema, apoi rezolv-o.
            - Păstrează sensul original al textelor din manuale.
 
-    13. FUNCȚIE SPECIALĂ - DESENARE (SVG):
-        Dacă elevul cere un desen, o diagramă, o schemă sau o hartă:
-        1. Ești OBLIGAT să generezi cod SVG valid.
-        2. Codul trebuie încadrat STRICT între tag-uri:
-           [[DESEN_SVG]]
-           <svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
-              <!-- Codul tău aici -->
-           </svg>
-           [[/DESEN_SVG]]
-        3. IMPORTANT: Nu uita tag-ul de deschidere <svg> și cel de închidere </svg>!
-        4. Adaugă întotdeauna etichete text (<text>) pentru a numi elementele din desen.
-        5. Folosește culori clare și contraste bune pentru lizibilitate.
-        6. NU adăuga niciodată fundal alb: NU pune fill="white" pe <svg> sau pe un <rect> de background.
-           Lasă fundalul transparent — containerul aplicației furnizează culoarea de fundal.
+    13. ANALIZA POZELOR CU LUCRĂRI PRACTICE (cablaje, lipituri, montaje):
+        Acest profesor nu generează desene/scheme — elevii învață făcând treaba fizic, ca la
+        metoda tradițională, apoi încarcă o poză cu rezultatul lor pentru feedback real.
+        Când primești o poză cu o lucrare practică de electronică (cablaj proiectat pe hârtie,
+        placă corodată, lipituri, montaj):
+        1. Descrie ÎNTÂI ce vezi obiectiv (componente, aranjament, trasee, calitate lipituri).
+        2. Evaluează CONCRET: e corect? Ce funcționează bine? Ce ar trebui schimbat?
+        3. Pentru layout de cablaj: verifică minimizarea jumperilor, clearance-ul vizual între
+           trasee, orientarea/polaritatea componentelor, alinierea pe grid.
+        4. Pentru lipituri: verifică aspectul joint-urilor (lucios vs mat/crăpat = lipitură rece),
+           cantitatea de cositor, curățenia generală.
+        5. Dă feedback ca un mentor care se uită la treaba reală a elevului — specific, onest,
+           constructiv. Nu generaliza cu fraze goale ("arată bine!") dacă poți fi concret.
 """
 
 _PROMPT_SUBJECTS: dict[str, str] = {
@@ -2133,77 +1808,48 @@ _PROMPT_SUBJECTS: dict[str, str] = {
 
        STIL DE PREDARE:
        - La orice explicație, oferă ÎNTÂI logica geometrică/fizică (de ce), apoi regula practică.
-       - Dacă elevul cere să proiecteze un cablaj pentru o schemă dată, ghidează-l pas cu pas:
+       - Dacă elevul cere să proiecteze un cablaj pentru o schemă dată, ghidează-l pas cu pas
+         PRIN GÂNDIRE (nu desenând tu în locul lui — elevul face treaba fizic, pe hârtie):
          1) identifică nodurile → 2) plasează componentele mari → 3) rutează alimentarea/masa
          → 4) rutează semnalele → 5) verifică regulile de lățime/clearance.
 
-       ⚠️ REGULĂ OBLIGATORIE — MINIMIZAREA JUMPERILOR (ACEASTA E "ARTA" REALĂ, CRITIC):
+       ⚠️ PRINCIPIU CENTRAL — MINIMIZAREA JUMPERILOR (ACEASTA E "ARTA" REALĂ A PROIECTĂRII):
        Un jumper NU e o soluție acceptabilă din prima încercare — e o CEDARE, admisă doar după ce
-       ai epuizat alternativele. Înainte de a propune un jumper pentru orice încrucișare, treci
-       OBLIGATORIU prin acest proces (arată-l elevului explicit, nu doar rezultatul final):
-       1. Încearcă să ROTEȘTI sau OGLINDEȘTI componenta implicată (mulți pini pot fi rearanjați
-          geometric fără să schimbe funcționarea circuitului — un tranzistor sau un IC poate fi
-          orientat altfel, un rezistor poate fi montat vertical în loc de orizontal).
-       2. Încearcă să MUȚI o componentă vecină pentru a elibera un culoar de trecere pentru
-          traseul blocat, chiar dacă asta strică simetria inițială a aranjamentului.
-       3. Încearcă să RESECVENȚIEZI ordinea de rutare — uneori rutarea traseelor într-o altă
-          ordine (semnalele critice primele, apoi alimentarea) deschide un traseu care înainte
-          părea blocat.
-       4. Încearcă să folosești un traseu care ocolește pe sub/pe lângă alte componente (nu în
-          linie dreaptă) — un traseu în unghi sau curbat evită adesea o încrucișare pe care un
-          traseu drept n-ar evita-o.
-       Doar dacă TOATE aceste variante eșuează, propune un jumper — și spune explicit elevului
-       DE CE (ce ai încercat și de ce n-a mers), ca să înțeleagă că jumperul e o decizie
-       argumentată, nu un reflex. Pentru un circuit simplu și simetric (ex. un multivibrator
-       astabil cu 2 tranzistoare), un proiectant priceput ajunge frecvent la 0-1 jumperi, nu la
-       2+, tocmai prin efortul de gândire de mai sus — tratează asta ca țintă, nu ca excepție.
+       elevul a epuizat alternativele. Când ghidezi elevul prin rezolvarea unei încrucișări,
+       întreabă-l/ghidează-l explicit prin acest proces ÎNAINTE de a accepta un jumper:
+       1. Poate ROTI sau OGLINDI componenta implicată? (mulți pini pot fi rearanjați geometric
+          fără să schimbe funcționarea circuitului — un tranzistor sau un IC poate fi orientat
+          altfel, un rezistor poate fi montat vertical în loc de orizontal)
+       2. Poate MUTA o componentă vecină pentru a elibera un culoar de trecere, chiar dacă asta
+          strică simetria inițială a aranjamentului?
+       3. Poate RESECVENȚIA ordinea de rutare — uneori rutarea traseelor într-o altă ordine
+          (semnalele critice primele, apoi alimentarea) deschide un traseu care înainte
+          părea blocat?
+       4. Poate folosi un traseu care ocolește pe sub/pe lângă alte componente (nu în linie
+          dreaptă)? Un traseu în unghi sau curbat evită adesea o încrucișare pe care un traseu
+          drept n-ar evita-o.
+       Doar dacă TOATE aceste variante eșuează, un jumper e justificat — și elevul ar trebui să
+       poată explica DE CE (ce a încercat și de ce n-a mers), ca decizia să fie argumentată, nu
+       un reflex. Pentru un circuit simplu și simetric (ex. un multivibrator astabil cu 2
+       tranzistoare), un proiectant priceput ajunge frecvent la 0-1 jumperi, nu la 2+, tocmai
+       prin efortul de gândire de mai sus — tratează asta ca țintă, nu ca excepție.
 
-       ⚠️ REGULĂ OBLIGATORIE — DESEN SVG PENTRU ORICE LAYOUT DE CABLAJ (CRITIC):
-       Un layout de cablaj FĂRĂ desen vizual e aproape inutil — elevul nu poate urmări o
-       "schiță" descrisă doar în cuvinte (ex. o listă de tipul "T1 / E B C / R1 / LED1" NU e un
-       desen, e text confuz). De aceea, ori de câte ori ghidezi elevul prin plasarea reală a
-       componentelor sau rutarea traseelor pentru O SCHEMĂ CONCRETĂ (nu doar principii generale),
-       ești OBLIGAT să generezi cod SVG valid conform regulii de desenare (marcaje
-       [[DESEN_SVG]]...[[/DESEN_SVG]]), chiar dacă elevul nu a folosit cuvântul "desenează" —
-       simplul fapt că cere un layout de cablaj pentru o schemă dată e suficient ca declanșator.
-       Pentru un layout de cablaj, generează DOUĂ vederi SVG separate (sau una singură cu ambele
-       zone clar delimitate și etichetate):
-         1. VEDEREA COMPONENTELOR (din partea de sus a plăcii): fiecare componentă ca formă simplă
-            (dreptunghi pentru rezistor, cerc pentru LED, etc.) cu eticheta ei (R1, T1, C1...) și
-            pinii marcați ca puncte mici.
-         2. VEDEREA TRASEELOR DE CUPRU (din partea de jos, în oglindă față de prima): liniile de
-            traseu conectând găurile corespunzătoare. Marchează un jumper (altă culoare) DOAR
-            dacă rearanjarea/rotirea componentelor nu a putut evita încrucișarea — numărul de
-            jumperi din desen trebuie să reflecte efortul real de minimizare, nu prima soluție.
-       Etichetează clar în SVG: numele fiecărei componente, polaritatea la condensatori electrolitici
-       și diode/LED-uri, și "+9V"/"GND" pe traseele de alimentare. Nu te limita la text descriptiv
-       când poți desena — un layout descris DOAR în cuvinte, fără SVG, e considerat un răspuns
-       incomplet la o cerere de proiectare cablaj.
-
-       CALITATEA DESENĂRII TRASEELOR (obligatoriu, nu opțional — un cablaj desenat neîngrijit e
-       la fel de inutil ca unul nedesenat):
-       - Poziționează TOATE componentele și punctele de conectare pe un GRID regulat (ex. multipli
-         de 20 unități SVG) — la fel cum hârtia de matematică oferă un grid fizic. Coordonate
-         "libere"/aproximative produc trasee strâmbe și neprofesionale.
-       - Traseele se desenează ca segmente de linie DREAPTĂ (folosind <line> sau <polyline>),
-         NICIODATĂ curbe libere (<path> cu curbe Bézier) — un cablaj real nu are trasee curbate
-         liber, are segmente drepte cu coturi la 45° sau 90°, exact ca în desenul manual cu
-         tragătorul descris în ETAPA 2/3.
-       - Rutare stil Manhattan/45°: fiecare traseu e o succesiune de segmente orizontale, verticale
-         sau la 45° — niciodată linii diagonale arbitrare care taie prin mijlocul altor componente.
-       - Un traseu NU trebuie să treacă vizual prin pinul sau corpul altei componente decât dacă
-         intenționat traversează pe acolo (și atunci trebuie clar că e un traseu, nu o coincidență
-         vizuală) — verifică geometric înainte de a desena.
-       - Dacă două trasee ar trebui să se intersecteze pe același desen (același "strat" vizual)
-         fără jumper și fără intenție explicită, ASTA E O EROARE DE LAYOUT — fie rearanjează
-         geometria, fie adaugă jumperul care lipsește. Un desen cu linii care se încrucișează
-         "din greșeală" e mai rău decât unul cu un jumper asumat.
-       - Păstrează o distanță vizuală clară și consistentă între trasee paralele (nu le desena
-         lipite unele de altele) — spațierea vizuală trebuie să reflecte clearance-ul real descris
-         în text.
-       - Folosește culori distincte și consistente pe tip de rol: ex. roșu pentru +9V, negru/gri
-         pentru GND, o culoare pentru semnal — și păstrează ACELEAȘI culori în ambele vederi
-         (componente și cupru), ca elevul să poată urmări vizual corespondența.
+       ⚠️ RECENZIA POZELOR CU LAYOUT-UL REAL AL ELEVULUI (fluxul principal de lucru aici):
+       Acest profesor NU generează desene ale cablajului — elevul proiectează layout-ul fizic
+       pe hârtie (sau direct pe placă), apoi încarcă o poză pentru feedback, exact ca la metoda
+       tradițională. Când primești o poză cu un layout de cablaj (pe hârtie sau pe placă deja
+       corodată):
+       1. Descrie ÎNTÂI ce vezi: unde sunt plasate componentele, cum sunt rutate traseele,
+         câți jumperi a folosit elevul.
+       2. Verifică punctele critice: numărul de jumperi (a încercat suficient să-i minimizeze?
+         vezi principiul de mai sus), clearance-ul vizual între trasee, dacă traseele de
+         alimentare/masă sunt suficient de late, dacă polaritatea componentelor (condensatori,
+         LED-uri) e marcată corect, dacă găurile/pad-urile sunt aliniate logic.
+       3. Dă feedback specific și onest: ce a făcut bine (numește exact ce), ce ar îmbunătăți
+         (numește exact unde și de ce), nu generalități de tipul "arată bine!".
+       4. Dacă vezi o încrucișare rezolvată cu jumper care ar fi putut fi evitată prin rotire/
+         mutare, arată-i elevului EXACT ce ar fi putut încerca, ca exercițiu de gândire pentru
+         data viitoare — nu doar "e ok, ai pus un jumper".
 
        - Dacă elevul menționează „cum se făcea pe vremuri” sau întreabă despre metoda manuală,
          tratează asta cu respect — e o competență tehnică reală, nu doar nostalgie.
@@ -2495,23 +2141,13 @@ _PROMPT_ALL_SUBJECTS = "\n    GHID DE COMPORTAMENT:\n" + "".join(_PROMPT_SUBJECT
 
 
 def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
-                      mod_strategie: bool = False, mod_bac_intensiv: bool = False, mod_avansat: bool = False,
-                      diagram_engine: str | None = None) -> str:
+                      mod_strategie: bool = False, mod_bac_intensiv: bool = False, mod_avansat: bool = False) -> str:
     """Returnează System Prompt adaptat materiei selectate și modurilor active.
-
-    diagram_engine: "svg" (implicit, regula de desenare din _PROMPT_COMUN) sau
-    "excalidraw" (experimental — suprascrie regula SVG cu una care cere JSON Excalidraw,
-    pentru comparație vizuală în modul Debug). Dacă nu e specificat explicit (None),
-    se preia automat din st.session_state["diagram_engine"] (implicit "svg") — astfel
-    apelurile existente ale funcției nu trebuie modificate ca să respecte alegerea din Debug.
 
     OPTIMIZARE TOKEN: când materia e selectată explicit, include DOAR blocul acelei materii
     (economie 71-94% din tokenii de system prompt față de versiunea completă).
     Când materia e None (Toate materiile), include toate blocurile — comportament original.
     """
-    if diagram_engine is None:
-        diagram_engine = st.session_state.get("diagram_engine", "svg")
-
     if materie == "pedagogie":
         # Mod pedagogie: trimitem doar _PROMPT_COMUN + _PROMPT_FINAL (fără bloc categorie)
         # Economie: ~70-90% din tokenii de system prompt față de versiunea cu categorie
@@ -2575,7 +2211,7 @@ def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
     ═══════════════════════════════════════════════════
 """ if pas_cu_pas else ""
 
-    # Bloc mod Strategie
+    # Bloc mod Strategie ("Explică-mi Strategia" — diferit de "Sfaturi de studiu"/pedagogie)
     mod_strategie_bloc = r"""
 
     ═══════════════════════════════════════════════════
@@ -2656,40 +2292,6 @@ def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
         # Toate materiile (sau materie necunoscută) — comportament original
         ghid_materie = _PROMPT_ALL_SUBJECTS
 
-    # ── Motor de desenare (Debug: SVG normal vs Excalidraw experimental) ──
-    diagram_engine_bloc = ""
-    if diagram_engine == "excalidraw":
-        diagram_engine_bloc = r"""
-
-    ⚠️ SUPRASCRIERE MOD DESENARE (DEBUG — EXCALIDRAW ACTIV):
-    IGNORĂ regula de desenare SVG de mai sus ([[DESEN_SVG]]). În schimb, pentru ORICE desen/
-    diagramă/layout de cablaj, generează o scenă Excalidraw în format JSON, în interiorul
-    marcajelor [[DESEN_EXCALIDRAW]]...[[/DESEN_EXCALIDRAW]].
-
-    Format JSON așteptat — un obiect cu o listă "elements", fiecare element cu cel puțin:
-    {
-      "type": "rectangle" | "ellipse" | "line" | "text" | "diamond",
-      "x": <număr>, "y": <număr>,
-      "width": <număr>, "height": <număr>,          // pentru rectangle/ellipse/diamond
-      "points": [[x1,y1],[x2,y2],...],               // pentru "line" (coordonate relative la x,y)
-      "text": "<text afișat>",                        // doar pentru type="text"
-      "fontSize": 16,                                 // doar pentru type="text"
-      "strokeColor": "#1e1e1e",
-      "backgroundColor": "transparent" | "<culoare hex>",
-      "strokeWidth": 1
-    }
-    Exemplu minim valid:
-    [[DESEN_EXCALIDRAW]]
-    {"elements": [
-      {"type": "rectangle", "x": 40, "y": 40, "width": 80, "height": 40, "strokeColor": "#1e1e1e", "backgroundColor": "transparent"},
-      {"type": "text", "x": 50, "y": 50, "text": "R1", "fontSize": 16, "strokeColor": "#1e1e1e"},
-      {"type": "line", "x": 120, "y": 60, "points": [[0,0],[60,0],[60,40]], "strokeColor": "#e03131", "strokeWidth": 2}
-    ]}
-    [[/DESEN_EXCALIDRAW]]
-    Regulile de conținut (grid, rutare Manhattan/45°, minimizare jumperi, etichetare) rămân
-    EXACT aceleași ca la regula SVG — doar formatul de output se schimbă la JSON Excalidraw.
-    NU amesteca cele două formate în același răspuns.
-"""
 
     return ("ROL: " + rol_line
             + pas_cu_pas_bloc
@@ -2698,8 +2300,7 @@ def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
             + mod_avansat_bloc
             + _PROMPT_COMUN
             + ghid_materie
-            + _PROMPT_FINAL
-            + diagram_engine_bloc)
+            + _PROMPT_FINAL)
 
 
 
@@ -2711,127 +2312,6 @@ SYSTEM_PROMPT = get_system_prompt(
     mod_strategie=st.session_state.get("mod_strategie", False),
     mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
 )
-
-
-# === DETECȚIE AUTOMATĂ CATEGORIE ===
-# Mapare cuvinte cheie → categorie de electronică (pentru detecție rapidă fără apel API)
-SUBJECT_KEYWORDS = {
-    "bazele_electronicii": [
-        "rezistor", "rezistență", "condensator", "diodă", "tranzistor", "mosfet",
-        "legea lui ohm", "lege lui ohm", "kirchhoff", "curent continuu", "curent alternativ",
-        "circuit serie", "circuit paralel", "divizor de tensiune", "amplificator operațional",
-        "poartă logică", "and", "or", "nand", "redresare", "filtrare", "led", "bobină",
-        "inductor", "reactanță", "555", "flip-flop", "componente electronice",
-    ],
-    "proiectare_cablaje": [
-        "cablaj", "pcb", "placă de test", "schemă electronică", "kicad", "eagle",
-        "traseu", "trasee", "footprint", "amprentă componentă", "clearance", "via",
-        "ground plane", "plan de masă", "corodare", "perclorură de fier", "toner transfer",
-        "peliculă foto-sensibilă", "layout", "rutare", "routare", "single-layer",
-        "monostrat", "gerber", "stencil cablaj",
-    ],
-    "lipire_rework": [
-        "lipire", "lipit", "fier de lipit", "cositor", "flux", "preheating", "preîncălzire",
-        "reballing", "rework", "aer cald", "hot air", "reflow", "bga", "desoldering",
-        "dezlipire", "fitil de desoldering", "pastă de cositor", "lead-free", "cu plumb",
-        "lipitură rece", "cold joint", "vârf de lipit", "stație de lipit",
-    ],
-    "depanare_diagnostic": [
-        "nu pornește", "nu funcționează", "defecțiune", "depanare", "diagnostic",
-        "scurtcircuit", "componentă arsă", "condensator umflat", "defect intermitent",
-        "ce s-a stricat", "de ce nu merge", "placa nu răspunde", "miros de ars",
-    ],
-    "masuratori_instrumente": [
-        "multimetru", "osciloscop", "generator de semnal", "sondă", "probe",
-        "sursă de laborator", "analizor logic", "măsurare tensiune", "măsurare curent",
-        "continuitate", "trigger", "bază de timp", "volts/div",
-    ],
-    "microcontrolere_embedded": [
-        "arduino", "esp32", "stm32", "microcontroler", "gpio", "pwm", "adc digital",
-        "i2c", "spi", "uart", "cod embedded", "debouncing", "întrerupere", "interrupt",
-        "senzor digital", "raspberry pi", "programare microcontroler",
-    ],
-    "siguranta_electronica": [
-        "esd", "descărcare electrostatică", "brățară antistatică", "tensiune periculoasă",
-        "protecție la lipit", "ventilație flux", "siguranță electrică", "risc electrocutare",
-        "echipament de protecție electronică",
-    ],
-}
-
-# Cuvinte care sunt exclusive unei categorii — boost mare dacă apar
-_STRONG_INDICATORS = {
-    "proiectare_cablaje": ["cablaj", "pcb", "kicad", "traseu", "footprint", "gerber",
-                           "corodare", "perclorură de fier", "ground plane"],
-    "lipire_rework": ["reballing", "preheating", "preîncălzire", "bga", "reflow",
-                      "cold joint", "lipitură rece", "fitil de desoldering"],
-    "depanare_diagnostic": ["defecțiune", "scurtcircuit", "condensator umflat",
-                            "componentă arsă", "nu pornește", "nu funcționează"],
-    "masuratori_instrumente": ["multimetru", "osciloscop", "generator de semnal",
-                               "analizor logic", "trigger"],
-    "microcontrolere_embedded": ["arduino", "esp32", "stm32", "gpio", "pwm", "i2c",
-                                 "spi", "uart", "microcontroler"],
-    "siguranta_electronica": ["esd", "descărcare electrostatică", "brățară antistatică"],
-    "bazele_electronicii": ["legea lui ohm", "lege lui ohm", "kirchhoff", "rezistor",
-                            "tranzistor", "mosfet", "poartă logică"],
-}
-
-def detect_subject_from_text(text: str) -> str | None:
-    """Detectează categoria de electronică dintr-un text folosind cuvinte cheie cu ponderi.
-
-    Folosește indicatori puternici (boost x3) + indicatori generali.
-
-    Returnează:
-      - str: categoria detectată (ex: "proiectare_cablaje", "lipire_rework")
-      - None: dacă nu s-a putut detecta nimic
-    """
-    text_lower = text.lower()
-    scores = {}
-
-    # Scor de bază din cuvintele cheie generale
-    for subject, keywords in SUBJECT_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in text_lower)
-        scores[subject] = score
-
-    # Boost x3 pentru indicatori puternici (specifici unei singure categorii)
-    for subject, indicators in _STRONG_INDICATORS.items():
-        strong_hits = sum(1 for ind in indicators if ind in text_lower)
-        scores[subject] = scores.get(subject, 0) + strong_hits * 3
-
-    # Elimină scoruri 0 și returnează maximul cu threshold minim
-    scores = {s: v for s, v in scores.items() if v > 0}
-    if not scores:
-        return None
-    best = max(scores, key=scores.get)
-    sorted_scores = sorted(scores.values(), reverse=True)
-
-    # Egalitate între două categorii diferite → nu detectăm cu certitudine
-    if len(sorted_scores) >= 2 and sorted_scores[0] == sorted_scores[1]:
-        return None
-
-    return best
-
-
-def get_detected_subject() -> str | None:
-    """Returnează materia detectată din session_state sau None."""
-    return st.session_state.get("_detected_subject", None)
-
-
-def update_system_prompt_for_subject(materie: str | None):
-    """Actualizează system prompt-ul pentru materia dată și salvează în session_state.
-    Resetează și flag-ul de caching — noul prompt trebuie re-cached la primul apel.
-    """
-    st.session_state["_detected_subject"] = materie
-    # Invalidăm caching-ul local — promptul s-a schimbat, cache-ul vechi nu mai e valid
-    st.session_state["_ctx_cache_enabled"] = True   # permite re-caching cu noul prompt
-    # FIX: folosim session_state în loc de variabilă globală (care se reseta la fiecare rerun)
-    st.session_state["_prompt_cache_store"] = {}  # curăță toate intrările locale
-    st.session_state["system_prompt"] = get_system_prompt(
-        materie=materie,
-        pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-        mod_avansat=st.session_state.get("mod_avansat", False),
-        mod_strategie=st.session_state.get("mod_strategie", False),
-        mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-    )
 
 
 
@@ -2903,405 +2383,6 @@ def extract_text_from_photo(image_bytes: bytes, materie_label: str) -> str:
 
     except Exception as e:
         return f"[Eroare la citirea pozei: {e}]"
-
-
-# ============================================================
-# === CORECTARE TEME ===
-# ============================================================
-
-def get_homework_correction_prompt(materie_label: str, text_tema: str, from_photo: bool = False) -> str:
-    source_note = (
-        "NOTĂ: Tema a fost extrasă dintr-o fotografie. "
-        "Unele cuvinte pot fi transcrise imperfect — judecă după intenția elevului.\n\n"
-        if from_photo else ""
-    )
-
-    if "Română" in materie_label:
-        corectare_limba = (
-            "## 🖊️ Corectare limbă și stil\n"
-            "Acordă atenție specială:\n"
-            "- **Ortografie**: diacritice (ă,â,î,ș,ț), cratimă, apostrof\n"
-            "- **Punctuație**: virgulă, punct, linie de dialog, ghilimele «»\n"
-            "- **Acord gramatical**: subiect-predicat, adjectiv-substantiv, pronume\n"
-            "- **Exprimare**: cacofonii, pleonasme, tautologii, registru stilistic\n"
-            "- **Coerență**: logica textului, legătura dintre idei\n"
-            "Subliniază greșelile găsite și explică regula corectă.\n\n"
-        )
-    else:
-        corectare_limba = (
-            f"## 🖊️ Limbaj și exprimare ({materie_label})\n"
-            "- Terminologie specifică folosită corect\n"
-            "- Notații, simboluri și unități de măsură corecte\n"
-            "- Raționament exprimat clar și logic\n\n"
-        )
-
-    return (
-        f"Ești profesor de {materie_label} și corectezi tema/proiectul unui cursant.\n\n"
-        f"{source_note}"
-        f"LUCRAREA CURSANTULUI:\n{text_tema}\n\n"
-        f"Corectează complet și constructiv:\n\n"
-        f"## ✅ Ce a făcut bine\n"
-        f"[aspecte corecte — fii specific, nu generic]\n\n"
-        f"## ❌ Greșeli de conținut\n"
-        f"[fiecare greșeală de materie explicată, cu varianta corectă]\n\n"
-        f"{corectare_limba}"
-        f"## 📊 Notă orientativă\n"
-        f"**Nota: X/10** — [justificare scurtă]\n\n"
-        f"## 💡 Sfaturi pentru data viitoare\n"
-        f"[2-3 recomandări concrete și aplicabile]\n\n"
-        f"Ton: cald, constructiv, ca un profesor care vrea să ajute, nu să descurajeze."
-    )
-
-
-def run_homework_ui():
-    st.subheader("📚 Corectare Temă / Proiect")
-
-    if not st.session_state.get("hw_done"):
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            hw_materie = st.selectbox(
-                "📚 Materia temei:",
-                options=[m for m in MATERII.keys() if m != "🤖 Automat"],
-                key="hw_materie_sel"
-            )
-        with col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.caption("Profesorul se adaptează materiei.")
-
-        st.divider()
-
-        tab_foto, tab_text = st.tabs(["📷 Fotografiază lucrarea", "⌨️ Scrie / lipește textul"])
-
-        with tab_foto:
-            st.info(
-                "📱 **Pe telefon:** fotografiază caietul sau foaia de temă.\n\n"
-                "💻 **Pe calculator:** încarcă o poză din galerie.\n\n"
-                "Profesorul va citi și corecta automat."
-            )
-            hw_photo = st.file_uploader(
-                "Încarcă fotografia temei:",
-                type=["jpg", "jpeg", "png", "webp", "heic"],
-                key="hw_photo_upload",
-                help="Asigură-te că poza e clară și bine luminată."
-            )
-
-            if hw_photo and not st.session_state.get("hw_ocr_done"):
-                st.image(hw_photo, caption="Fotografia încărcată", use_container_width=True)
-                with st.spinner("🔍 Profesorul citește tema..."):
-                    text_extras = extract_text_from_photo(hw_photo.read(), hw_materie)
-                st.session_state.hw_text       = text_extras
-                st.session_state.hw_ocr_done   = True
-                st.session_state.hw_from_photo = True
-                st.session_state.hw_materie    = hw_materie
-                with st.spinner("📝 Se corectează tema..."):
-                    prompt = get_homework_correction_prompt(hw_materie, text_extras, from_photo=True)
-                    corectare = "".join(run_chat_with_rotation(
-                        [], [prompt],
-                        system_prompt=get_system_prompt(
-                            materie=MATERII.get(hw_materie),
-                            pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                            mod_avansat=st.session_state.get("mod_avansat", False),
-                            mod_strategie=st.session_state.get("mod_strategie", False),
-                            mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-                        )
-                    ))
-                st.session_state.hw_corectare = corectare
-                st.session_state.hw_done      = True
-                st.rerun()
-            elif hw_photo and st.session_state.get("hw_ocr_done"):
-                with st.expander("📄 Text extras din poză", expanded=False):
-                    st.text(st.session_state.get("hw_text", ""))
-
-        with tab_text:
-            hw_text = st.text_area(
-                "Lipește sau scrie textul temei:",
-                value=st.session_state.get("hw_text", ""),
-                height=300,
-                placeholder="Scrie sau lipește tema aici...",
-                key="hw_text_input"
-            )
-            st.session_state.hw_text = hw_text
-            if st.button("📝 Corectează tema", type="primary",
-                         use_container_width=True, disabled=not hw_text.strip()):
-                st.session_state.hw_materie    = hw_materie
-                st.session_state.hw_from_photo = False
-                with st.spinner("📝 Se corectează tema..."):
-                    prompt = get_homework_correction_prompt(hw_materie, hw_text, from_photo=False)
-                    corectare = "".join(run_chat_with_rotation(
-                        [], [prompt],
-                        system_prompt=get_system_prompt(
-                            materie=MATERII.get(hw_materie),
-                            pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                            mod_avansat=st.session_state.get("mod_avansat", False),
-                            mod_strategie=st.session_state.get("mod_strategie", False),
-                            mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-                        )
-                    ))
-                st.session_state.hw_corectare = corectare
-                st.session_state.hw_done      = True
-                st.rerun()
-
-    else:
-        mat = st.session_state.get("hw_materie", "")
-        src = "📷 din fotografie" if st.session_state.get("hw_from_photo") else "✏️ scrisă manual"
-        st.caption(f"{mat} · temă {src}")
-        if st.session_state.get("hw_from_photo") and st.session_state.get("hw_text"):
-            with st.expander("📄 Text extras din poză", expanded=False):
-                st.text(st.session_state.hw_text)
-        st.markdown(st.session_state.hw_corectare)
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📚 Corectează altă temă", type="primary", use_container_width=True):
-                _hw_mat = st.session_state.get("hw_materie_sel")
-                for k in [k for k in list(st.session_state.keys()) if k.startswith("hw_")]:
-                    st.session_state.pop(k, None)
-                if _hw_mat: st.session_state["hw_materie_sel"] = _hw_mat
-                st.rerun()
-        with col2:
-            if st.button("💬 Înapoi la chat", use_container_width=True):
-                for k in [k for k in list(st.session_state.keys()) if k.startswith("hw_")]:
-                    st.session_state.pop(k, None)
-                st.session_state.pop("homework_mode", None)
-                st.rerun()
-
-
-# === MOD QUIZ ===
-NIVELE_QUIZ = ["🟢 Ușor (începător)", "🟡 Mediu (intermediar)", "🔴 Greu (avansat)"]
-
-MATERII_QUIZ = [m for m in list(MATERII.keys()) if m != "🤖 Automat"]
-
-
-def get_quiz_prompt(materie_label: str, nivel: str, materie_val: str) -> str:
-    """Generează prompt pentru crearea unui quiz."""
-    nivel_text = nivel.split(" ", 1)[1].strip("()")
-    return f"""Generează un quiz de 5 întrebări la {materie_label} pentru nivel {nivel_text}.
-
-REGULI STRICTE:
-1. Generează EXACT 5 întrebări numerotate (1. 2. 3. 4. 5.)
-2. Fiecare întrebare are 4 variante de răspuns: A) B) C) D)
-3. La finalul TUTUROR întrebărilor adaugă un bloc special cu răspunsurile corecte:
-
-[[RASPUNSURI_CORECTE]]
-1: X
-2: X
-3: X
-4: X
-5: X
-[[/RASPUNSURI_CORECTE]]
-
-unde X este A, B, C sau D.
-4. Întrebările trebuie să fie clare și potrivite pentru nivel {nivel_text}.
-5. Folosește LaTeX ($...$) pentru formule matematice.
-6. NU da explicații acum — doar întrebările și răspunsurile corecte la final."""
-
-
-def parse_quiz_response(response: str) -> tuple[str, dict]:
-    """Extrage intrebarile si raspunsurile corecte din raspunsul AI.
-
-    FIX: Gestioneaza corect cazurile cand AI-ul nu respecta exact delimitatorii:
-    - Delimitatori lipsa: fallback prin cautarea unui bloc de raspunsuri
-    - Formate variate: '1: A', '1. A', '1) A', '**1**: A'
-    - Raspunsuri cu text extra: '1: A) text' -> extrage doar litera
-    """
-    correct = {}
-    clean_response = response
-
-    # Incearca mai intai delimitatorii exacti
-    match = re.search(r'\[\[RASPUNSURI_CORECTE\]\](.*?)\[\[/RASPUNSURI_CORECTE\]\]',
-                      response, re.DOTALL)
-
-    # FIX: Fallback — AI-ul uneori omite delimitatorii sau ii scrie diferit
-    if not match:
-        match = re.search(
-            r'(?:raspunsuri\s*corecte|raspunsuri\s*corecte|answers?)[:\s]*\n'
-            r'((?:\s*\d+\s*[:.)-]\s*[A-D].*\n?){3,})',
-            response, re.IGNORECASE | re.DOTALL
-        )
-
-    if match:
-        block_start = match.start()
-        clean_response = response[:block_start].strip()
-        raw_block = match.group(1) if match.lastindex and match.lastindex >= 1 else match.group(0)
-
-        for line in raw_block.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # FIX: accepta formate: '1: A', '1. A', '1) A', '**1**: A', '1: A) text...'
-            # FIX: regex mai strict — maxim 1 cifra pentru nr intrebare (evita "11: A" etc.)
-            m = re.match(r'\*{0,2}(\d{1,2})\*{0,2}\s*[:.)-]\s*\*{0,2}([A-D])\b', line, re.IGNORECASE)
-            if m:
-                try:
-                    q_num = int(m.group(1))
-                    ans = m.group(2).upper()
-                    correct[q_num] = ans
-                except ValueError:
-                    pass
-
-    # FIX: Daca tot nu avem raspunsuri, incearca extractie din textul intreg
-    if not correct:
-        for m in re.finditer(
-            r'(?:intrebarea|intrebarea|question)?\s*(\d+).*?'
-            r'r[a]spuns(?:ul)?\s*(?:corect)?\s*[:\s]+([A-D])\b',
-            response, re.IGNORECASE
-        ):
-            try:
-                q_num = int(m.group(1))
-                ans = m.group(2).upper()
-                if 1 <= q_num <= 10:
-                    correct[q_num] = ans
-            except ValueError:
-                pass
-
-    return clean_response, correct
-
-
-def evaluate_quiz(user_answers: dict, correct_answers: dict) -> tuple[int, str]:
-    """Evaluează răspunsurile și returnează (scor, feedback_text)."""
-    score = sum(1 for q, a in user_answers.items() if correct_answers.get(q) == a)
-    total = len(correct_answers)
-
-    lines = []
-    for q in sorted(correct_answers.keys()):
-        user_ans = user_answers.get(q, "—")
-        correct_ans = correct_answers[q]
-        if user_ans == correct_ans:
-            lines.append(f"✅ **Întrebarea {q}**: {user_ans} — Corect!")
-        else:
-            lines.append(f"❌ **Întrebarea {q}**: ai răspuns **{user_ans}**, corect era **{correct_ans}**")
-
-    if score == total:
-        verdict = "🏆 Excelent! Nota 10!"
-    elif score >= total * 0.8:
-        verdict = "🌟 Foarte bine!"
-    elif score >= total * 0.6:
-        verdict = "👍 Bine, mai exersează puțin!"
-    elif score >= total * 0.4:
-        verdict = "📚 Trebuie să mai studiezi."
-    else:
-        verdict = "💪 Nu-ți face griji, încearcă din nou!"
-
-    feedback = f"### Rezultat: {score}/{total} — {verdict}\n\n" + "\n\n".join(lines)
-    return score, feedback
-
-
-def run_quiz_ui():
-    """Randează UI-ul pentru modul Quiz."""
-    st.subheader("📝 Mod Examinare")
-
-    # --- Setup quiz ---
-    if not st.session_state.get("quiz_active"):
-        col1, col2 = st.columns(2)
-        with col1:
-            quiz_materie_label = st.selectbox(
-                "Materie:",
-                options=MATERII_QUIZ,
-                key="quiz_materie_select"
-            )
-        with col2:
-            quiz_nivel = st.selectbox(
-                "Nivel:",
-                options=NIVELE_QUIZ,
-                key="quiz_nivel_select"
-            )
-
-        if st.button("🚀 Generează Quiz", type="primary", use_container_width=True):
-            quiz_materie_val = MATERII[quiz_materie_label]
-            with st.spinner("📝 Profesorul pregătește întrebările..."):
-                prompt = get_quiz_prompt(quiz_materie_label, quiz_nivel, quiz_materie_val)
-                full_resp = ""
-                for chunk in run_chat_with_rotation(
-                    [], [prompt],
-                    system_prompt=get_system_prompt(
-                        materie=quiz_materie_val,
-                        pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                        mod_avansat=st.session_state.get("mod_avansat", False),
-                        mod_strategie=st.session_state.get("mod_strategie", False),
-                        mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-                    )
-                ):
-                    full_resp += chunk
-
-            questions_text, correct = parse_quiz_response(full_resp)
-            if len(correct) >= 3:
-                st.session_state.quiz_active = True
-                st.session_state.quiz_questions = questions_text
-                st.session_state.quiz_correct = correct
-                st.session_state.quiz_answers = {}
-                st.session_state.quiz_submitted = False
-                st.session_state.quiz_materie = quiz_materie_label
-                st.session_state.quiz_nivel = quiz_nivel
-                st.rerun()
-            else:
-                st.error("❌ Nu am putut genera quiz-ul. Încearcă din nou.")
-        return
-
-    # --- Quiz activ ---
-    st.caption(f"📚 {st.session_state.quiz_materie} · {st.session_state.quiz_nivel}")
-
-    # Afișează întrebările
-    st.markdown(st.session_state.quiz_questions)
-    st.divider()
-
-    if not st.session_state.quiz_submitted:
-        st.markdown("**Alege răspunsurile tale:**")
-        answers = {}
-        for q_num in sorted(st.session_state.quiz_correct.keys()):
-            answers[q_num] = st.radio(
-                f"Întrebarea {q_num}:",
-                options=["A", "B", "C", "D"],
-                horizontal=True,
-                key=f"quiz_ans_{q_num}",
-                index=None
-            )
-
-        all_answered = all(v is not None for v in answers.values())
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Trimite răspunsurile", type="primary",
-                         disabled=not all_answered, use_container_width=True):
-                st.session_state.quiz_answers = {k: v for k, v in answers.items() if v}
-                st.session_state.quiz_submitted = True
-                st.rerun()
-        with col2:
-            if st.button("🔄 Quiz nou", use_container_width=True):
-                _quiz_mat   = st.session_state.get("quiz_materie_select")
-                _quiz_nivel = st.session_state.get("quiz_nivel_select")
-                for k in ["quiz_active", "quiz_questions", "quiz_correct",
-                          "quiz_answers", "quiz_submitted"]:
-                    st.session_state.pop(k, None)
-                if _quiz_mat:   st.session_state["quiz_materie_select"] = _quiz_mat
-                if _quiz_nivel: st.session_state["quiz_nivel_select"]   = _quiz_nivel
-                st.rerun()
-    else:
-        # Afișează rezultatele
-        score, feedback = evaluate_quiz(
-            st.session_state.quiz_answers,
-            st.session_state.quiz_correct
-        )
-        st.markdown(feedback)
-        st.divider()
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔄 Quiz nou", type="primary", use_container_width=True):
-                _quiz_mat   = st.session_state.get("quiz_materie_select")
-                _quiz_nivel = st.session_state.get("quiz_nivel_select")
-                for k in ["quiz_active", "quiz_questions", "quiz_correct",
-                          "quiz_answers", "quiz_submitted"]:
-                    st.session_state.pop(k, None)
-                if _quiz_mat:   st.session_state["quiz_materie_select"] = _quiz_mat
-                if _quiz_nivel: st.session_state["quiz_nivel_select"]   = _quiz_nivel
-                st.rerun()
-        with col2:
-            if st.button("💬 Înapoi la chat", use_container_width=True):
-                for k in ["quiz_active", "quiz_questions", "quiz_correct",
-                          "quiz_answers", "quiz_submitted", "quiz_mode"]:
-                    st.session_state.pop(k, None)
-                st.rerun()
-
 
 
 # ============================================================
@@ -3617,14 +2698,11 @@ def run_chat_with_rotation(history_obj, payload, system_prompt=None):
 # === UI PRINCIPAL ===
 st.title("🔧 Profesor de Electronică")
 
-# Afișăm materia selectată mic sub titlu
-if st.session_state.get("pedagogie_mode"):
-    st.caption("🧠 **Mod Sfaturi de studiu**")
-else:
-    _mat_curenta = st.session_state.get("materie_selectata")
-    if _mat_curenta:
-        _mat_label = next((k for k, v in MATERII.items() if v == _mat_curenta), _mat_curenta)
-        st.caption(f"Materie selectată: **{_mat_label}**")
+# Afișăm categoria selectată mic sub titlu
+_mat_curenta = st.session_state.get("materie_selectata")
+if _mat_curenta:
+    _mat_label = next((k for k, v in MATERII.items() if v == _mat_curenta), _mat_curenta)
+    st.caption(f"Categorie selectată: **{_mat_label}**")
 
 with st.sidebar:
     st.header("⚙️ Opțiuni")
@@ -3646,160 +2724,26 @@ with st.sidebar:
     materie_selectata = MATERII[materie_label]
     _mod_automat = (materie_selectata is None)  # True când e "🤖 Automat"
 
-    # Actualizează system prompt dacă s-a schimbat materia
+    # Actualizează system prompt dacă s-a schimbat categoria
     if st.session_state.get("materie_selectata") != materie_selectata:
         st.session_state.materie_selectata = materie_selectata
-        if _mod_automat:
-            # Mod automat — resetăm detecția, promptul va fi setat la primul mesaj
-            st.session_state.pop("_detected_subject", None)
-            st.session_state.pop("_pending_user_msg", None)
-            st.session_state.system_prompt = get_system_prompt(
-                materie=None,
-                pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                mod_avansat=st.session_state.get("mod_avansat", False),
-                mod_strategie=st.session_state.get("mod_strategie", False),
-                mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-            )
-        else:
-            # Mod manual — selectorul are prioritate absolută
-            st.session_state["_detected_subject"] = materie_selectata
-            st.session_state.pop("_pending_user_msg", None)
-            st.session_state.system_prompt = get_system_prompt(
-                materie_selectata,
-                pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                mod_avansat=st.session_state.get("mod_avansat", False),
-                mod_strategie=st.session_state.get("mod_strategie", False),
-                mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-            )
+        st.session_state.system_prompt = get_system_prompt(
+            materie_selectata,
+            pas_cu_pas=st.session_state.get("pas_cu_pas", False),
+            mod_avansat=st.session_state.get("mod_avansat", False),
+            mod_strategie=st.session_state.get("mod_strategie", False),
+            mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
+        )
         # Forțăm rerun explicit — necesar pe mobil unde sidebar-ul nu declanșează
-        # automat rerender-ul paginii principale după schimbare de materie
+        # automat rerender-ul paginii principale după schimbare de categorie
         st.rerun()
 
-    # Info materie curentă sub selector
+    # Info categorie curentă sub selector
     if _mod_automat:
-        _detected_now = st.session_state.get("_detected_subject")
-        if _detected_now and _detected_now != "pedagogie":
-            _det_label = _MATERII_LABEL.get(_detected_now, _detected_now.capitalize())
-            st.caption(f"🔍 Detectat: **{_det_label}**")
-        elif not _detected_now:
-            st.caption("🔍 Materia se detectează automat din mesaj")
+        st.caption("🤖 Fără restricție de categorie — profesorul răspunde pe orice temă de electronică.")
     else:
         st.info(f"Focusat pe: **{materie_label}**")
 
-    # --- Toggle Sfaturi de studiu ---
-    # Când se activează: salvează sesiunea curentă și deschide conversație nouă dedicată.
-    # Când se dezactivează: restaurează sesiunea anterioară (sau meniul principal dacă nu exista).
-    _ped_active = st.session_state.get("pedagogie_mode", False)
-    _ped_toggle = st.toggle(
-        "🧠 Sfaturi de studiu",
-        value=_ped_active,
-        help="Activează pentru sfaturi de organizare și tehnici de învățare eficientă. Dezactivează pentru a reveni la profesor."
-    )
-
-    if _ped_toggle != _ped_active:
-        if _ped_toggle:
-            # ── ACTIVARE: salvăm sesiunea curentă și deschidem una nouă ──
-            st.session_state["_ped_prev_session_id"]   = st.session_state.get("session_id", "")
-            st.session_state["_ped_prev_messages"]     = list(st.session_state.get("messages", []))
-            st.session_state["_ped_prev_materie"]      = st.session_state.get("materie_selectata")
-            st.session_state["_ped_prev_detected"]     = st.session_state.get("_detected_subject")
-            st.session_state["_ped_prev_system_prompt"]= st.session_state.get("system_prompt", "")
-
-            # Sesiune nouă dedicată sfaturilor de studiu
-            _ped_sid = generate_unique_session_id()
-            register_session(_ped_sid)
-            st.session_state["session_id"] = _ped_sid
-            st.session_state["messages"]   = []
-            # FIX 1: adăugăm sesiunea de pedagogie în lista locală — apare în sidebar
-            _my_sids = st.session_state.get("_my_session_ids", [])
-            if _ped_sid not in _my_sids:
-                _my_sids.append(_ped_sid)
-            st.session_state["_my_session_ids"] = _my_sids
-            # Curățăm modurile active (temă/proiect, quiz)
-            for _k in ["homework_mode", "hw_materie", "hw_text",
-                       "hw_corectare", "hw_done", "hw_from_photo", "hw_ocr_done",
-                       "quiz_mode", "quiz_active", "quiz_questions", "quiz_correct",
-                       "quiz_answers", "quiz_submitted", "quiz_materie", "quiz_nivel",
-                       "_suggested_question", "_pending_user_msg"]:
-                st.session_state.pop(_k, None)
-            st.session_state["pedagogie_mode"]    = True
-            st.session_state["_detected_subject"] = "pedagogie"
-            st.session_state["system_prompt"]     = get_system_prompt(
-                materie="pedagogie",
-                pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                mod_avansat=st.session_state.get("mod_avansat", False),
-                mod_strategie=st.session_state.get("mod_strategie", False),
-                mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-            )
-            invalidate_session_cache()
-            components.html(
-                f"<script>localStorage.setItem('profesor_session_id', {json.dumps(_ped_sid)});</script>",
-                height=0,
-            )
-        else:
-            # ── DEZACTIVARE: restaurăm sesiunea anterioară ──
-            _prev_sid = st.session_state.get("_ped_prev_session_id", "")
-            _prev_msg = st.session_state.get("_ped_prev_messages", [])
-            _prev_mat = st.session_state.get("_ped_prev_materie")
-            _prev_det = st.session_state.get("_ped_prev_detected")
-            _prev_sys = st.session_state.get("_ped_prev_system_prompt", "")
-
-            st.session_state["pedagogie_mode"] = False
-            # Curățăm cheile temporare de salvare
-            for _k in ["_ped_prev_session_id", "_ped_prev_messages",
-                       "_ped_prev_materie", "_ped_prev_detected", "_ped_prev_system_prompt"]:
-                st.session_state.pop(_k, None)
-
-            if _prev_sid and is_valid_session_id(_prev_sid):
-                # Restaurăm sesiunea anterioară
-                st.session_state["session_id"]        = _prev_sid
-                st.session_state["messages"]          = _prev_msg
-                st.session_state["materie_selectata"] = _prev_mat
-                st.session_state["_detected_subject"] = _prev_det
-                st.session_state["system_prompt"]     = _prev_sys or get_system_prompt(
-                    materie=_prev_mat,
-                    pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                    mod_avansat=st.session_state.get("mod_avansat", False),
-                    mod_strategie=st.session_state.get("mod_strategie", False),
-                    mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-                )
-                # FIX 3: actualizăm și URL-ul ?sid= — altfel la refresh se restaurează SID-ul de pedagogie
-                try:
-                    st.query_params["sid"] = _prev_sid
-                except Exception:
-                    pass
-                components.html(
-                    f"<script>localStorage.setItem('profesor_session_id', {json.dumps(_prev_sid)});</script>",
-                    height=0,
-                )
-            else:
-                # Nu exista sesiune anterioară → meniu principal (ecran curat)
-                _new_main_sid = generate_unique_session_id()
-                register_session(_new_main_sid)
-                st.session_state["session_id"]        = _new_main_sid
-                st.session_state["messages"]          = []
-                st.session_state["materie_selectata"] = None
-                st.session_state.pop("_detected_subject", None)
-                st.session_state["system_prompt"]     = get_system_prompt(
-                    materie=None,
-                    pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                    mod_avansat=st.session_state.get("mod_avansat", False),
-                    mod_strategie=st.session_state.get("mod_strategie", False),
-                    mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-                )
-                # FIX 3b: actualizăm URL-ul și localStorage la sesiunea nouă
-                try:
-                    st.query_params["sid"] = _new_main_sid
-                except Exception:
-                    pass
-                components.html(
-                    f"<script>localStorage.setItem('profesor_session_id', {json.dumps(_new_main_sid)});</script>",
-                    height=0,
-                )
-            invalidate_session_cache()
-        st.rerun()
-
-    st.divider()
 
     # --- Dark Mode toggle ---
     dark_mode = st.toggle("🌙 Mod Întunecat", value=st.session_state.get("dark_mode", False))
@@ -3897,7 +2841,7 @@ with st.sidebar:
 
         def _build_conversation_txt(messages: list) -> str:
             """Construiește textul conversației pentru descărcare."""
-            _materie = st.session_state.get("materie_selectata") or st.session_state.get("_detected_subject")
+            _materie = st.session_state.get("materie_selectata")
             _materie_label = _MATERII_LABEL.get(_materie, "General") if _materie else "General"
             _sid_short = st.session_state.session_id[:8]
             _now = _dt.datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -4189,42 +3133,6 @@ with st.sidebar:
 
     st.divider()
 
-    # --- Mod Quiz + Corectare Temă/Proiect ---
-    st.subheader("📝 Examinare")
-
-    # Chei exacte per mod — actualizați când adăugați chei noi în fiecare mod
-    _HW_KEYS = [
-        "homework_mode", "hw_materie", "hw_text", "hw_corectare",
-        "hw_done", "hw_from_photo", "hw_ocr_done",
-    ]
-    _QUIZ_KEYS = [
-        "quiz_mode", "quiz_active", "quiz_questions", "quiz_correct",
-        "quiz_answers", "quiz_submitted", "quiz_materie", "quiz_nivel",
-    ]
-    _SHARED_KEYS = ["_suggested_question", "_pending_user_msg"]
-
-    def _clear_all_modes():
-        for k in _HW_KEYS + _QUIZ_KEYS + _SHARED_KEYS:
-            st.session_state.pop(k, None)
-
-    col_q, col_h = st.columns(2)
-    with col_q:
-        if st.button("🎯 Quiz rapid", use_container_width=True,
-                     type="primary" if st.session_state.get("quiz_mode") else "secondary"):
-            entering = not st.session_state.get("quiz_mode", False)
-            _clear_all_modes()
-            st.session_state.quiz_mode = entering
-            st.rerun()
-    with col_h:
-        if st.button("📚 Corectează Proiect", use_container_width=True,
-                     type="primary" if st.session_state.get("homework_mode") else "secondary"):
-            entering = not st.session_state.get("homework_mode", False)
-            _clear_all_modes()
-            st.session_state.homework_mode = entering
-            st.rerun()
-
-    st.divider()
-
     # --- Istoric conversații ---
     st.subheader("🕐 Conversații anterioare")
     if st.button("🔄 Conversație nouă", use_container_width=True):
@@ -4315,35 +3223,6 @@ with st.sidebar:
         st.caption(f"📊 Mesaje în memorie: {msg_count}/{MAX_MESSAGES_IN_MEMORY}")
         st.caption(f"🔑 Cheie API activă: {st.session_state.key_index + 1}/{len(keys)}")
 
-        # ── Motor de desenare (experimental) ──
-        st.caption("🎨 Motor de desenare (experimental):")
-        _engine_val = st.session_state.get("diagram_engine", "svg")
-        _engine_options = {"svg": "SVG (actual)", "excalidraw": "Excalidraw (CDN, experimental)"}
-        _engine_choice = st.radio(
-            "Motor desen",
-            options=list(_engine_options.keys()),
-            format_func=lambda k: _engine_options[k],
-            index=list(_engine_options.keys()).index(_engine_val),
-            key="_diagram_engine_radio",
-            label_visibility="collapsed",
-            horizontal=True,
-        )
-        if _engine_choice != _engine_val:
-            st.session_state["diagram_engine"] = _engine_choice
-            st.session_state.system_prompt = get_system_prompt(
-                st.session_state.get("materie_selectata"),
-                mod_avansat=st.session_state.get("mod_avansat", False),
-                pas_cu_pas=st.session_state.get("pas_cu_pas", False),
-                mod_strategie=st.session_state.get("mod_strategie", False),
-                mod_bac_intensiv=st.session_state.get("mod_bac_intensiv", False),
-                diagram_engine=_engine_choice,
-            )
-            st.toast(f"🎨 Motor de desenare: {_engine_options[_engine_choice]}", icon="✅")
-            st.rerun()
-        if _engine_choice == "excalidraw":
-            st.caption("⚠️ Excalidraw se încarcă live din CDN (esm.sh) în browser-ul tău — "
-                       "poate eșua dacă rețeaua/browser-ul blochează scripturi externe.")
-
         # ── Statistici token usage per cheie (sesiunea curentă) ──
         # Notă: Gemini Free tier = 1.500 req/zi și 1.000.000 token/min per cheie.
         # Nu avem acces la quota rămasă prin API — afișăm consumul din sesiunea curentă.
@@ -4376,15 +3255,6 @@ with st.sidebar:
 
         st.caption(f"🆔 Sesiune: {st.session_state.session_id[:16]}...")
 
-
-# === MAIN UI — TEMĂ/PROIECT / QUIZ / CHAT ===
-if st.session_state.get("homework_mode"):
-    run_homework_ui()
-    st.stop()
-
-if st.session_state.get("quiz_mode"):
-    run_quiz_ui()
-    st.stop()
 
 # === ÎNCĂRCARE MESAJE (CHAT MODE) ===
 # Încărcăm istoricul dacă: nu există messages, sau messages aparțin altei sesiuni
@@ -4435,19 +3305,9 @@ if (
     except Exception:
         pass  # restaurarea SRT e best-effort — nu blocăm aplicația
 
-    # ── Restaurare materie din istoricul încărcat ──
-    # Dacă sesiunea are mesaje dar materia nu e setată (ex: după switch_session),
-    # detectăm materia din primele mesaje ale elevului și o blocăm.
-    # Asta previne re-detectarea la mijlocul conversației după un reload.
-    if _loaded_msgs and not st.session_state.get("_detected_subject"):
-        # Căutăm primele 3 mesaje ale elevului pentru o detecție mai sigură
-        _first_user_msgs = [m["content"] for m in _loaded_msgs if m.get("role") == "user"][:3]
-        _combined_text = " ".join(_first_user_msgs)
-        if _combined_text:
-            _restored_subject = detect_subject_from_text(_combined_text)
-            if _restored_subject:
-                st.session_state["_detected_subject"] = _restored_subject
-                update_system_prompt_for_subject(_restored_subject)
+    # Notă: categoria (materie_selectata) nu e persistată separat per sesiune în Supabase —
+    # la restaurarea unei conversații vechi, categoria revine la "Automat" (universal) și
+    # elevul o poate re-selecta manual din sidebar dacă vrea răspunsuri specializate.
 
     # ── Revenire din altă sesiune/zi: pre-generăm rezumatul de context ──
     # FIX 7: nu generăm rezumat dacă lista e goală (sesiune nouă de pedagogie sau chat nou)
@@ -4510,23 +3370,6 @@ for i, msg in enumerate(st.session_state.messages):
         else:
             st.markdown(msg["content"])
 
-    # Butoanele apar DOAR sub ultimul mesaj al profesorului
-    if (msg["role"] == "assistant" and
-            i == len(st.session_state.messages) - 1):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("🔄 Nu am înțeles", key="qa_reexplain", use_container_width=True, help="Explică altfel, cu o altă analogie"):
-                st.session_state["_quick_action"] = "reexplain"
-                st.rerun()
-        with col2:
-            if st.button("✏️ Exercițiu similar", key="qa_similar", use_container_width=True, help="Generează un exercițiu similar pentru practică"):
-                st.session_state["_quick_action"] = "similar"
-                st.rerun()
-        with col3:
-            if st.button("🧠 Explică strategia", key="qa_strategy", use_container_width=True, help="Cum să gândești acest tip de problemă"):
-                st.session_state["_quick_action"] = "strategy"
-                st.rerun()
-
 
 # ── Handler pentru butoanele de acțiuni rapide ──
 
@@ -4537,128 +3380,6 @@ TYPING_HTML = """
 </div>
 """
 
-if st.session_state.get("_quick_action"):
-    action = st.session_state.pop("_quick_action")
-    # FIX Bug 2: _quick_action_ref nu era setat nicăieri — eliminat, nu mai e necesar
-    # (context-ul vine direct din ultimul mesaj al asistentului/utilizatorului)
-
-    # ── Găsește ultimul mesaj al asistentului pentru context real ──
-    last_assistant_msg = ""
-    last_user_msg = ""
-    for msg in reversed(st.session_state.messages):
-        if msg["role"] == "assistant" and not last_assistant_msg:
-            last_assistant_msg = msg["content"]
-        if msg["role"] == "user" and not last_user_msg:
-            last_user_msg = msg["content"]
-        if last_assistant_msg and last_user_msg:
-            break
-
-    # FIX Bug 2: logică robustă pentru prev_topic și prev_question
-    # - curățăm LaTeX (\$...\$, \$\$...\$\$) și markdown înainte de trunchiere
-    # - trunchierea se face la spațiu, nu în mijlocul unui cuvânt LaTeX
-    # - fallback explicit dacă mesajele lipsesc
-    _clean = lambda t: re.sub(r'\$\$[\s\S]*?\$\$|\$[^\$\n]*?\$|[*`#\\]', '', t).strip()
-    _clean2 = lambda t: re.sub(r'\s+', ' ', _clean(t))  # colapsăm whitespace multiplu
-
-    if last_assistant_msg:
-        _cleaned = _clean2(last_assistant_msg)
-        # Trunchierea la 120 de caractere, la granița unui cuvânt
-        if len(_cleaned) > 120:
-            prev_topic = _cleaned[:120].rsplit(' ', 1)[0].rstrip('.,;:') + "..."
-        else:
-            prev_topic = _cleaned or "subiectul anterior"
-    else:
-        prev_topic = "subiectul anterior"
-
-    if last_user_msg:
-        _cleaned_q = _clean2(last_user_msg)
-        prev_question = _cleaned_q[:100] if len(_cleaned_q) > 100 else _cleaned_q
-        prev_question = prev_question or "întrebarea anterioară"
-    else:
-        prev_question = "întrebarea anterioară"
-
-    action_prompts = {
-        "reexplain": (
-            f"Nu am înțeles explicația ta despre: '{prev_topic}'. "
-            f"Te rog să explici din nou, dar complet diferit — "
-            f"altă analogie, altă ordine a pașilor, exemple mai simple din viața reală. "
-            f"Evită exact aceleași cuvinte și structura anterioară."
-        ),
-        "similar": (
-            f"Generează un exercițiu similar cu '{prev_question}', "
-            f"cu date numerice sau o situație practică diferită, cu dificultate puțin mai mare. "
-            f"Enunță exercițiul ÎNTÂI, apoi rezolvă-l complet pas cu pas."
-        ),
-        "strategy": (
-            f"Explică-mi STRATEGIA de gândire pentru '{prev_question}': "
-            f"cum recunosc că e acest tip, ce fac primul pas în minte, ce capcane să evit. "
-            f"Fără calcule — vreau doar logica și gândirea din spate."
-        ),
-    }
-    injected = action_prompts.get(action, "")
-    if injected:
-        with st.chat_message("user"):
-            st.markdown(injected)
-        st.session_state.messages.append({"role": "user", "content": injected})
-        save_message_with_limits(st.session_state.session_id, "user", injected)
-
-        context_messages = get_context_for_ai(st.session_state.messages)
-        history_obj = []
-        for msg in context_messages:
-            role_gemini = "model" if msg["role"] == "assistant" else "user"
-            history_obj.append({"role": role_gemini, "parts": [msg["content"]]})
-
-        # Salvăm pentru retry în caz de eroare de cheie
-        st.session_state["_retry_history"] = history_obj
-        st.session_state["_retry_payload"] = [injected]
-
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
-            message_placeholder.markdown(TYPING_HTML, unsafe_allow_html=True)
-            try:
-                for text_chunk in run_chat_with_rotation(history_obj, [injected]):
-                    full_response += text_chunk
-                    message_placeholder.markdown(full_response + "▌")
-                message_placeholder.empty()
-                render_message(full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                save_message_with_limits(st.session_state.session_id, "assistant", full_response)
-                st.session_state.pop("_retry_history", None)
-                st.session_state.pop("_retry_payload", None)
-            except Exception as e:
-                message_placeholder.empty()
-                _is_key_err = any(x in str(e) for x in ["epuizat", "invalide", "quota", "429", "API key"])
-                if _is_key_err:
-                    st.warning("⚠️ Cheia API s-a epuizat. Cheia a fost schimbată — apasă **Reîncercați**.", icon="🔑")
-                    if st.button("🔄 Reîncercați răspunsul", key="_retry_quick_action", type="primary"):
-                        st.session_state["_pending_retry"] = True
-                        st.rerun()
-                else:
-                    st.error(f"❌ Eroare: {e}")
-    st.stop()
-
-# ── Handler mesaj în așteptare — materie nedetectată în mod Automat ──
-if st.session_state.get("_pending_user_msg") and st.session_state.get("materie_selectata") is None:
-    _pending_msg = st.session_state["_pending_user_msg"]
-
-    with st.chat_message("assistant"):
-        st.markdown("**La ce categorie de electronică se referă întrebarea ta?** Alege una din opțiunile de mai jos:")
-        # Butoane pentru fiecare materie (fără Automat)
-        _materii_optiuni = [(k, v) for k, v in MATERII.items() if v is not None]
-        _cols = st.columns(3)
-        for i, (label, cod) in enumerate(_materii_optiuni):
-            with _cols[i % 3]:
-                if st.button(label, key=f"_pick_materie_{cod}", use_container_width=True):
-                    # Setăm materia și trimitem mesajul original
-                    update_system_prompt_for_subject(cod)
-                    st.session_state["_detected_subject"] = cod
-                    st.session_state.pop("_pending_user_msg", None)
-                    st.session_state["_suggested_question"] = _pending_msg
-                    st.rerun()
-
-    st.stop()
-
 # ── Handler întrebare sugerată — ÎNAINTE de afișarea butoanelor ──
 if st.session_state.get("_suggested_question"):
     user_input = st.session_state.pop("_suggested_question")
@@ -4666,24 +3387,6 @@ if st.session_state.get("_suggested_question"):
         st.markdown(user_input)
     st.session_state.messages.append({"role": "user", "content": user_input})
     save_message_with_limits(st.session_state.session_id, "user", user_input)
-
-    # ── Detecție și routing materie ──
-    _materie_manuala = st.session_state.get("materie_selectata")
-    _mod_automat = (_materie_manuala is None)
-
-    if not _mod_automat:
-        if st.session_state.get("_detected_subject") != _materie_manuala:
-            update_system_prompt_for_subject(_materie_manuala)
-    else:
-        _detected = detect_subject_from_text(user_input)
-        _prev_detected = st.session_state.get("_detected_subject")
-        if _detected and _detected != _prev_detected:
-            update_system_prompt_for_subject(_detected)
-            _det_label = _MATERII_LABEL.get(_detected, _detected.capitalize())
-            st.toast(f"📚 {_det_label}", icon="🎯")
-        elif not _detected and not _prev_detected:
-            st.session_state["_pending_user_msg"] = user_input
-            st.rerun()
 
     context_messages = get_context_for_ai(st.session_state.messages)
     history_obj = []
@@ -4818,9 +3521,8 @@ if not st.session_state.get("messages") and not st.session_state.get("pedagogie_
         for i, (label, cod) in enumerate(_materii_butoane):
             with _cols[i % 2]:
                 if st.button(label, key=f"pick_mat_{cod}", use_container_width=True):
-                    # Setăm materia în selector și în session_state
+                    # Setăm categoria în selector și în session_state
                     st.session_state.materie_selectata = cod
-                    st.session_state["_detected_subject"] = cod
                     st.session_state["system_prompt"] = get_system_prompt(
                         materie=cod,
                         pas_cu_pas=st.session_state.get("pas_cu_pas", False),
@@ -4957,80 +3659,6 @@ if user_input := st.chat_input("Întreabă profesorul..."):
         _active_txt_key = st.session_state.get("_active_textcache_key")
         if _active_txt_key and st.session_state.get(_active_txt_key):
             text_file_content = st.session_state[_active_txt_key]
-
-    # ── Detecție și routing materie ──
-    _materie_manuala = st.session_state.get("materie_selectata")  # None = mod Automat
-    _mod_automat = (_materie_manuala is None)
-
-    # Dacă elevul a încărcat un fișier text (SRT, docx, txt, dbf), mesajul descrie
-    # o operație pe fișier ("traduce din engleză în română", "rezumă", etc.) și conține
-    # cuvinte-cheie de limbi/materii care ar declanșa fals detecția.
-    # Excludem complet detecția de materie în acest caz.
-    _has_text_file_uploaded = bool(
-        st.session_state.get("_current_uploaded_file_meta", {}).get("name", "").lower().split(".")[-1]
-        in ("srt", "txt", "docx", "doc", "dbf")
-        and text_file_content  # fișierul chiar a fost încărcat și extras
-    )
-
-    if not _mod_automat:
-        # Mod manual: selectorul are prioritate — asigurăm prompt-ul corect
-        if st.session_state.get("_detected_subject") != _materie_manuala:
-            update_system_prompt_for_subject(_materie_manuala)
-        # FIX Bug 3: avertizăm dacă textul pare să fie pentru altă materie
-        # (detectăm din mesaj, comparăm cu selecția manuală — toast non-blocant)
-        # EXCEPȚIE: dacă e un fișier text încărcat, nu avertizăm — mesajul conține
-        # inevitabil cuvinte de limbi/materii (ex: "traduce din engleză în română")
-        if not _has_text_file_uploaded:
-            _detected_in_msg = detect_subject_from_text(user_input)
-            if (
-                _detected_in_msg
-                and _detected_in_msg != _materie_manuala
-                and _detected_in_msg != "pedagogie"
-                and not st.session_state.get(f"_mismatch_warned_{st.session_state.session_id}")
-            ):
-                _sel_label = _MATERII_LABEL.get(_materie_manuala, _materie_manuala or "materia selectată")
-                _det_label = _MATERII_LABEL.get(_detected_in_msg, _detected_in_msg.capitalize())
-                st.toast(
-                    f"💡 Mesajul pare să fie despre {_det_label}, dar ești pe {_sel_label}. "
-                    f"Schimbă materia din sidebar dacă vrei răspuns specializat.",
-                    icon="⚠️"
-                )
-                st.session_state[f"_mismatch_warned_{st.session_state.session_id}"] = True
-
-    else:
-        # Mod automat: detectăm materia DOAR la primul mesaj din conversație.
-        # Odată ce materia e stabilită (_detected_subject setat) și conversația
-        # a început (există cel puțin un mesaj), NU mai re-detectăm — rămânem
-        # pe materia identificată la început, chiar dacă elevul pune o întrebare
-        # care conține termeni din altă materie (ex: o problemă de fizică cu
-        # termeni matematici nu trebuie să schimbe contextul în matematică).
-        _prev_detected = st.session_state.get("_detected_subject")
-        _conv_started = bool(_prev_detected)  # materia a fost deja stabilită
-
-        if _conv_started:
-            # Conversație în desfășurare — păstrăm materia detectată la început
-            # și ne asigurăm că prompt-ul e corect (ex: după switch sesiune)
-            if st.session_state.get("system_prompt") is None:
-                update_system_prompt_for_subject(_prev_detected)
-        elif _has_text_file_uploaded:
-            # Primul mesaj dar cu fișier text — nu detectăm din mesaj (ar fi fals positiv).
-            # Lăsăm materia nedeterminată; profesorul va răspunde generic.
-            pass
-        else:
-            # Chat nou sau fără materie stabilită — rulăm detecția
-            _detected = detect_subject_from_text(user_input)
-
-            if _detected:
-                # Detectat cu succes — blocăm materia pentru această conversație
-                update_system_prompt_for_subject(_detected)
-                _det_label = _MATERII_LABEL.get(_detected, _detected.capitalize())
-                st.toast(f"📚 {_det_label}", icon="🎯")
-                for _k in [k for k in st.session_state.keys() if k.startswith("_mismatch_warned_")]:
-                    del st.session_state[_k]
-            else:
-                # Nu s-a putut detecta materia — salvăm mesajul și întrebăm elevul
-                st.session_state["_pending_user_msg"] = user_input
-                st.rerun()
 
     context_messages = get_context_for_ai(st.session_state.messages)
     history_obj = []
