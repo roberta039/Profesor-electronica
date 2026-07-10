@@ -1778,20 +1778,54 @@ _PROMPT_SUBJECTS: dict[str, str] = {
        - Curățarea vopselei după corodare: se îndepărta cu diluant/acetonă sau prin șlefuire
          ușoară, expunând traseele de cupru gata de cositorire.
 
-       3b. ALTE METODE ISTORICE/ALTERNATIVE:
+       3b. ALTE METODE ISTORICE:
        - Metoda cu peliculă foto-sensibilă: placă cuprată foto-sensibilă + film cu desenul
          cablajului (negativ) + expunere UV + developare (sodă caustică diluată) + corodare.
-       - Metoda "toner transfer": desen imprimat cu imprimantă laser pe hârtie specială/lucioasă,
-         transferat pe cupru cu căldură (fier de călcat/laminator), apoi corodare.
        - Corodare cu perclorură de fier (FeCl₃): mai lentă și mai ușor de controlat decât
-         HCl+perhidrol, dar mai greu de procurat în anumite perioade/zone — de aici popularitatea
-         metodei cu acid clorhidric în multe ateliere școlare. Soluție caldă (~40-50°C)
-         accelerează procesul; agitarea constantă previne corodarea inegală.
+         HCl+perhidrol. Soluție caldă (~40-50°C) accelerează procesul; agitarea constantă
+         previne corodarea inegală.
        - Găurire: alegerea diametrului burghiului în funcție de terminalul componentei
          (tipic 0.8mm pentru terminale subțiri, 1mm pentru rezistoare/condensatoare, diametre
          mai mari pentru conectori/șuruburi de fixare).
        - Verificarea cu ohmetrul/continuitate ÎNAINTE de montaj — verifici că nu există
          scurtcircuite între trasee adiacente și că fiecare traseu proiectat e continuu.
+
+       3c. METODA MODERNĂ "TONER TRANSFER" (varianta cea mai accesibilă azi — fără tragător/
+       vopsea, materialele se găsesc ușor la magazinele de componente electronice):
+       - Proiectarea pe calculator NU necesită neapărat un program EDA (KiCad/Eagle) — deși
+         acestea rămân opțiunea profesională, oricine poate desena traseele și în orice program
+         de desen simplu (GIMP, Inkscape, chiar Paint sau un editor de prezentări/documente),
+         atâta timp cât rezultatul e o imagine alb-negru clară, la scară 1:1, ÎN OGLINDĂ (mirror)
+         față de cum va arăta placa finală. Precizia contează mai mult decât instrumentul folosit.
+       - Tipărire OBLIGATORIU cu imprimantă LASER (nu cu jet de cerneală — cerneala se dizolvă/
+         mâzgălește la transfer și la corodare), pe hârtie lucioasă specială pentru transfer termic
+         (se găsește la magazinele de electronice/papetării) sau chiar hârtie lucioasă de revistă
+         ca alternativă mai ieftină. Setări de tipărire: calitate maximă, contrast/negru maxim,
+         scară exact 1:1 — verifică mereu cu o riglă pe pagina tipărită înainte de transfer.
+       - Pregătirea plăcii: șlefuire cu burete abraziv/lână de oțel fină, apoi degresare cu
+         alcool izopropilic sau acetonă, până cuprul strălucește. Nu se atinge suprafața după.
+       - Transferul: hârtia (tonerul cu fața pe cupru) se presează pe placă cu un fier de călcat
+         (fără abur!) sau un laminator, la căldură medie-mare, cu presiune fermă și UNIFORMĂ pe
+         toată suprafața, timp de 2-4 minute. Prea puțină căldură/presiune → tonerul nu se lipește
+         complet; prea multă → traseele se "umflă" și se pot scurtcircuita între ele. E nevoie de
+         puțină experimentare pentru a găsi combinația potrivită cu fierul propriu.
+       - Răcire și dezlipire: după transfer, placa se lasă să se răcească (unii o bagă la frigider
+         câteva minute pentru rezultate mai bune), apoi se ține sub jet de apă până hârtia se
+         înmoaie, și se desprinde ușor prin frecare — tonerul rămâne lipit pe cupru.
+       - Corectarea imperfecțiunilor: dacă rămân goluri mici în traseu, se completează manual cu
+         un marker permanent rezistent la coroziv, ÎNAINTE de corodare.
+       - Corodare: aceleași opțiuni descrise mai sus (perclorură de fier — cea mai comună și mai
+         ușor de găsit azi la magazinele de electronice — sau HCl+perhidrol, cu aceleași măsuri
+         de siguranță). Persulfatul de amoniu e o alternativă folosită de unii pasionați, dar mai
+         greu de procurat la noi.
+       - Plăci disponibile azi: placă cuprată simplă (single-sided) pentru cablaje pe un strat, sau
+         dublu placată (double-sided) dacă vrei să exersezi și cablaje pe 2 straturi — ambele se
+         găsesc la magazinele de componente electronice, alături de perclorura de fier și hârtia
+         specială de transfer, deci tot procesul e accesibil azi fără improvizații.
+       - Cablaj dublu placat (avansat): se transferă și se protejează o parte (bandă adezivă) cât
+         se corodează cealaltă, apoi invers — sau se aliniază ambele fețe simultan folosind câteva
+         găuri de reper date dinainte prin ambele straturi, ca ghid de aliniere. Alinierea e partea
+         cea mai dificilă la acest nivel.
 
        ETAPA 4 — PARALELA MODERNĂ (KiCad / EDA):
        - "Design rules" din KiCad (lățime minimă traseu, clearance minim) sunt EXACT regulile
