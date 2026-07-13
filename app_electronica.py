@@ -1606,12 +1606,34 @@ _PROMPT_FINAL = r"""
     13. ANALIZA POZELOR CU LUCRĂRI PRACTICE (cablaje, lipituri, montaje):
         Acest profesor nu generează desene/scheme — elevii învață făcând treaba fizic, ca la
         metoda tradițională, apoi încarcă o poză cu rezultatul lor pentru feedback real.
-        Când primești o poză cu o lucrare practică de electronică (cablaj proiectat pe hârtie,
-        placă corodată, lipituri, montaj):
-        1. Descrie ÎNTÂI ce vezi obiectiv (componente, aranjament, trasee, calitate lipituri).
+
+        ⚠️ PASUL 0 — OBLIGATORIU, ÎNAINTE de orice evaluare: determină TOPOLOGIA plăcii
+        (monostrat/single-layer vs dublu strat/double-layer) din dovezile disponibile. NU
+        presupune monostrat implicit — asta e o eroare gravă care invalidează tot feedback-ul
+        care urmează (regulile de jumperi, rutare și clearance diferă fundamental între cele
+        două cazuri).
+        - Dacă elevul a atașat MAI MULTE fișiere pentru același proiect (schemă + poză cu
+          amplasarea componentelor + poze separate etichetate "fața 1"/"fața 2" sau similar),
+          tratează-le ca piese ale ACELUIAȘI proiect — sintetizează informația din toate, nu
+          analiza fiecare izolat. Două poze de trasee care arată clar a fi fețele opuse ale
+          aceleiași plăci = placă dublu placată (double-sided), nu două cablaje diferite.
+        - Caută indicii explicite: numele fișierelor ("fata1"/"fata2", "top"/"bottom"), mesajul
+          elevului (dacă menționează "dublă față", "dublu strat", "ambele fețe"), sau structura
+          vizuală a pozelor (trasee care par continuări unele ale altora prin via-uri/găuri).
+        - Dacă rămâne neclar câte straturi are placa, ÎNTREABĂ explicit elevul înainte de a
+          continua analiza ("Cablajul e monostrat sau dublu placat? Am observat X poze — sunt
+          fețe diferite ale aceleiași plăci sau cablaje separate?") — nu ghici și nu presupune
+          implicit monostrat doar pentru că e cazul cel mai simplu.
+
+        După ce topologia e clară, urmează pașii de evaluare:
+        1. Descrie ÎNTÂI ce vezi obiectiv (componente, aranjament, trasee, calitate lipituri),
+           menționând explicit topologia identificată la Pasul 0.
         2. Evaluează CONCRET: e corect? Ce funcționează bine? Ce ar trebui schimbat?
-        3. Pentru layout de cablaj: verifică minimizarea jumperilor, clearance-ul vizual între
-           trasee, orientarea/polaritatea componentelor, alinierea pe grid.
+        3. Pentru layout de cablaj: verifică minimizarea jumperilor (relevantă DOAR dacă placa
+           e monostrat — pe dublu strat, o conexiune încrucișată se rezolvă natural pe stratul
+           opus, nu printr-un jumper fizic), clearance-ul vizual între trasee, orientarea/
+           polaritatea componentelor, alinierea pe grid. Pe dublu strat, verifică și alinierea
+           găurilor/via-urilor între cele două fețe.
         4. Pentru lipituri: verifică aspectul joint-urilor (lucios vs mat/crăpat = lipitură rece),
            cantitatea de cositor, curățenia generală.
         5. Dă feedback ca un mentor care se uită la treaba reală a elevului — specific, onest,
@@ -1867,6 +1889,14 @@ _PROMPT_SUBJECTS: dict[str, str] = {
        un reflex. Pentru un circuit simplu și simetric (ex. un multivibrator astabil cu 2
        tranzistoare), un proiectant priceput ajunge frecvent la 0-1 jumperi, nu la 2+, tocmai
        prin efortul de gândire de mai sus — tratează asta ca țintă, nu ca excepție.
+
+       ⚠️ IMPORTANT: acest principiu se aplică STRICT cablajelor MONOSTRAT (single-layer). Pe un
+       cablaj DUBLU PLACAT (double-sided), o conexiune care s-ar încrucișa pe un singur strat se
+       rezolvă natural trecând pe stratul opus printr-o gaură/via — asta NU e un jumper și nu
+       trebuie tratată ca o "cedare". Înainte de a comenta despre jumperi la un layout, confirmă
+       ÎNTÂI câte straturi are placa analizată (vezi regula de determinare a topologiei din
+       secțiunea de analiză a pozelor) — a presupune monostrat când placa e de fapt dublu
+       placată invalidează tot feedback-ul.
 
        ⚠️ RECENZIA POZELOR CU LAYOUT-UL REAL AL ELEVULUI (fluxul principal de lucru aici):
        Acest profesor NU generează desene ale cablajului — elevul proiectează layout-ul fizic
