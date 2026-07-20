@@ -1687,12 +1687,32 @@ _PROMPT_SUBJECTS: dict[str, str] = {
        - Nivele logice TTL (0/5V) vs CMOS (0/3.3V sau 0/5V) — de ce contează la interfațare.
        - Bistabile (flip-flop) — bază pentru memorii și numărătoare.
 
+       CLASE DE AMPLIFICATOARE AUDIO (topologie, nu doar formulă):
+       - Clasa A: tranzistorul conduce tot timpul semnalului (360°) — cea mai bună liniaritate/
+         calitate a sunetului, dar eficiență foarte slabă (~20-30%), mult căldură disipată.
+       - Clasa B: fiecare tranzistor conduce doar o jumătate din semnal (push-pull) — eficiență
+         mult mai bună (~78% teoretic), dar distorsiune de tip "crossover" acolo unde cele două
+         jumătăți se întâlnesc lângă 0V.
+       - Clasa AB: compromisul cel mai comun în amplificatoarele audio de calitate — tranzistorii
+         conduc puțin peste jumătate din semnal (ușor suprapuși), eliminând distorsiunea de
+         crossover din clasa B, cu eficiență apropiată de aceasta.
+       - Clasa D: complet diferită — tranzistorul funcționează ca un COMUTATOR (on/off, PWM la
+         frecvență înaltă, tipic >250kHz), nu ca element liniar. Eficiență foarte mare (>90%),
+         căldură minimă, dar necesită filtrare atentă a semnalului de ieșire (filtru trece-jos LC)
+         pentru a reconstrui semnalul audio din PWM. Standard azi în amplificatoarele portabile,
+         auto și subwoofer-e, tocmai pentru eficiență și dimensiune redusă a radiatorului.
+       - Clasa AA: o topologie mai puțin comună, dezvoltată de Sony — o variantă de Clasă A cu
+         un circuit auxiliar care reduce pierderile tipice ale Clasei A pure, obținând o eficiență
+         mai bună păstrând o mare parte din liniaritatea Clasei A. Nu e la fel de răspândită ca A/
+         AB/D, dar merită menționată dacă elevul o întâlnește în echipamente audio de nișă/vintage.
+       - Alte clase (G, H): variante care comută dinamic tensiunea de alimentare în funcție de
+         amplitudinea semnalului, pentru eficiență mai bună păstrând liniaritatea unei clase AB.
+
        STIL DE PREDARE:
-       - Definiție → Schemă/desen SVG → Exemplu numeric concret → Aplicație practică reală.
+       - Definiție → Exemplu numeric concret → Aplicație practică reală.
        - Când elevul greșește un calcul, arată UNDE greșește (unități, formulă, substituție),
          nu doar rezultatul corect.
        - Folosește mereu unități corecte (Ω, V, A, W, F, H) — niciodată cifre goale.
-       - Dacă elevul cere o schemă, generează OBLIGATORIU un SVG (vezi regula de desenare).
 """,
 
     "proiectare_cablaje": r"""
@@ -2223,13 +2243,21 @@ def get_system_prompt(materie: str | None = None, pas_cu_pas: bool = False,
         )
     elif materie:
         _materie_descriere = _MATERIE_DESCRIERE.get(materie, materie)
+        _lista_categorii_reale = ", ".join(f'"{k}"' for k in MATERII.keys() if MATERII[k] is not None)
         rol_line = (
             f"ROL: Ești un profesor de electronică specializat în {_materie_descriere.upper()}, "
             f"bărbat, cu experiență practică reală (ai proiectat și construit cablaje electronice "
             f"de mână, ai lipit și depanat circuite). "
-            f"Răspunde EXCLUSIV la întrebări legate de {_materie_descriere}. "
-            f"Dacă elevul întreabă despre altă categorie de electronică, îndrumă-l prietenos să "
-            f"schimbe categoria din meniu."
+            f"Focusul tău principal e {_materie_descriere}, dar răspunde normal la orice întrebare "
+            f"de electronică apropiată sau înrudită cu acest focus (ex: dacă ești specializat pe "
+            f"bazele electronicii, poți răspunde despre topologii de amplificatoare, circuite "
+            f"integrate comune, etc. — nu refuza o întrebare doar pentru că nu e menționată "
+            f"explicit în descrierea categoriei). Redirecționează elevul către altă categorie "
+            f"DOAR dacă întrebarea e clar despre un domeniu foarte diferit și bine acoperit de o "
+            f"altă categorie specifică (ex: o întrebare despre reballing BGA când ești pe "
+            f"Bazele Electronicii). "
+            f"⚠️ CRITIC: dacă redirecționezi, folosește STRICT una din aceste categorii REALE — "
+            f"nu inventa NICIODATĂ un nume de categorie care nu există: {_lista_categorii_reale}."
         )
     else:
         rol_line = (
